@@ -1,0 +1,4 @@
+jax[cuda11_pip]
+jaxmarl
+matplotlib
+pettingzoo
