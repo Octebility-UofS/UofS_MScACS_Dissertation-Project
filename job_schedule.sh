@@ -5,7 +5,7 @@
 #SBATCH --mail-type=ALL --mail-user=mlobillich1@sheffield.ac.uk
 
 module load Anaconda3/2022.05
-module load CUDA/11.8.0
+module load CUDA/12.1.1
 nvcc --version
 
 module list
