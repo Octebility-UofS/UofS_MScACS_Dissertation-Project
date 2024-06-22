@@ -10,5 +10,7 @@ nvcc --version
 
 module list
 
+echo "$SLURM_JOB_ID"
+
 source activate env_dissertation_project
-python $1 %j
+python $1 $SLURM_JOB_ID
