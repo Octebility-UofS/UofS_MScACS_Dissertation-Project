@@ -8,5 +8,7 @@ module load Anaconda3/2022.05
 module load CUDA/11.8.0
 nvcc --version
 
+module list
+
 source activate env_dissertation_project
 python $1 %j
