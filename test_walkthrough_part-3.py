@@ -1,3 +1,4 @@
+import os
 import jax
 import jax.numpy as jnp
 import flax.linen as nn
@@ -368,4 +369,6 @@ for i in range(config["NUM_SEEDS"]):
     plt.plot(out["metrics"]["returned_episode_returns"][i].mean(-1).reshape(-1))
 plt.xlabel("Update Step")
 plt.ylabel("Return")
-plt.savefig(f"out/job_{JOB_ID}/train_curve.png")
+target_dir = os.path.join("out", f"job_{JOB_ID}")
+os.makedirs(target_dir, exist_ok=True)
+plt.savefig(os.path.join(target_dir, "train_curve.png"))
