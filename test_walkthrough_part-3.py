@@ -18,7 +18,9 @@ from omegaconf import OmegaConf
 
 import matplotlib.pyplot as plt
 
-JOB_ID = sys.argv[1]
+JOB_ID = 0
+if len(sys.argv) > 1:
+    JOB_ID = sys.argv[1]
 
 class ActorCritic(nn.Module):
     action_dim: Sequence[int]
