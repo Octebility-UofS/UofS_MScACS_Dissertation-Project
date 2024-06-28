@@ -90,14 +90,9 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
         # Transform all observation vectors to group them by partner agents
         for env_ix, (obsv, _) in enumerate(env_stack):
             sorted_items = sorted(map_agent_uid_to_partner_instance[env_ix].items(), key=lambda t: t[0])
-            for agent_id, (team_ix, ix_array, num_partner_instances) in sorted_items:
+            for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
                 for i in range(num_partner_instances):
-                    # This operation does not work with jit since the bool array is not of concrete size
-                    mask = jnp.isclose(ix_array, i)
-                    transformed_observations[team_ix][i].append(obsv[agent_id][mask])
-                    
-
-        return None
+                    transformed_observations[team_ix][i].append(obsv[agent_id][masks[i]])
 
 
         # Run each transformed stack of observations through their respective parntner agents
@@ -107,8 +102,8 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
                 processed = partner.process_observation(stacked_obsv)
                 stacked_actions = partner.get_action(processed)
 
-                obsv_shapes = jnp.array([ a.shape[0] for a in transformed_observations[team_ix][p_ix] ])
-                fragmented_actions = jnp.split(stacked_actions, jnp.cumsum(obsv_shapes))
+                obsv_shapes = np.array([ a.shape[0] for a in transformed_observations[team_ix][p_ix] ])
+                fragmented_actions = jnp.split(stacked_actions, np.cumsum(obsv_shapes))
                 transformed_actions[team_ix][p_ix] = fragmented_actions
 
 
@@ -120,9 +115,9 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
             
         for env_ix, (obsv, _) in enumerate(env_stack):
             sorted_items = sorted(map_agent_uid_to_partner_instance[env_ix].items(), key=lambda t: t[0])
-            for agent_id, (team_ix, ix_array, num_partner_instances) in sorted_items:
+            for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
                 for i in range(num_partner_instances):
-                    mask = jnp.isclose(ix_array, i)
+                    mask = masks[i]
                     action_v = action_stack[env_ix]
                     a_fragment = transformed_actions[team_ix][i].pop(0)
                     action_v[agent_id] = action_v[agent_id].at[mask].set(a_fragment)
@@ -168,7 +163,7 @@ def _update_step(runner_state, _):
 
 
 
-def _make_stage_1(config, env_mapping: EnvMapping):
+def _make_stage_1(config, env_mapping: EnvMapping, numpy_seed: int):
     # Key Assumptions:
     # - Every agent in the environment has
     #   - the same action space
@@ -179,6 +174,8 @@ def _make_stage_1(config, env_mapping: EnvMapping):
     environments = []
     for _env in env_mapping.envs:
         environments.append(jaxmarl.make(_env.env_id))
+
+    np_rng = np.random.default_rng(numpy_seed)
 
     def _stage_1(rng):
         # Create all parallelised environments
@@ -201,19 +198,22 @@ def _make_stage_1(config, env_mapping: EnvMapping):
 
         for episode_ix in range(config["NUM_EPISODES"]):
             # Randomly sample partners to assign to agents in their respective teams for each environment
-            # Save this information in a map (important for batch/unbatch operations)
-
+            # Generate this using numpy so that jax can treat it as static values
+            # Important for later splitting up the arrays
             map_agent_uid_to_partner_instance = dict()
             for (team_ix, team_spec) in enumerate(env_mapping.teams):
                 for (env_ix, agent_id) in team_spec.agent_uids:
-                    rand_key, rng = jax.random.split(rng)
                     if env_ix not in map_agent_uid_to_partner_instance:
                         map_agent_uid_to_partner_instance[env_ix] = dict()
                     partner_count = team_spec.agent_count
                     env_instance_count = env_mapping.envs[env_ix].count
+                    sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
+                    masks = []
+                    for i in range(partner_count):
+                        masks.append(np.isclose(sampled_partners, i))
                     map_agent_uid_to_partner_instance[env_ix][agent_id] = (
                         env_ix,
-                        jax.random.choice(rand_key, partner_count, shape=(env_instance_count, )),
+                        masks,
                         partner_count
                     )
             
@@ -233,5 +233,5 @@ def _make_stage_1(config, env_mapping: EnvMapping):
 
 class FCP:
     @staticmethod
-    def make_stage_1(config, env_mapping: EnvMapping):
-        return _make_stage_1(config, env_mapping)
+    def make_stage_1(config, env_mapping: EnvMapping, numpy_seed:int):
+        return _make_stage_1(config, env_mapping, numpy_seed)

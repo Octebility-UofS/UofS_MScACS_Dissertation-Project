@@ -79,6 +79,7 @@ config = {
 
 if __name__ == "__main__":
     rng = jax.random.PRNGKey(0)
+    numpy_seed = 0
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
@@ -90,5 +91,5 @@ if __name__ == "__main__":
     )
 
     # stage_1_jit = FCP.make_stage_1(config, env_mapping)
-    stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping))
+    stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     stage_1_jit(rng)
