@@ -143,7 +143,7 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
         # Reverse the process with the stacked actions to use them for stepping the environments
         action_stack = []
         for obsv, _ in env_stack:
-            action_v = { k: jnp.zeros(v.shape[0], dtype=int) for k, v in obsv.items() }
+            action_v = { k: jnp.zeros(v.shape[0], dtype='int32') for k, v in obsv.items() }
             action_stack.append(action_v)
             
         for env_ix, (obsv, _) in enumerate(env_stack):
