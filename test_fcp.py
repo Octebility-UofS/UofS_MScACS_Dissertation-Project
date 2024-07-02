@@ -13,7 +13,7 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jaxmarl.environments import SimpleReferenceMPE
 
-from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec
+from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, SelfPlayAgentFactory, TeamSpec, _make_stage_2
 
 
 class SimpleNetwork(nn.Module):
@@ -41,43 +41,79 @@ class SimpleNetwork(nn.Module):
         value_squeezed = jnp.squeeze(value, axis=-1)
 
         return pi, value_squeezed
+    
 
+def make_simple_agent(init_rng, config, env_specs: list[EnvSpec], team_spec: TeamSpec, environments):
+    sample_env = environments[team_spec.agent_uids[0].env_ix]
+    sample_agent_id = team_spec.agent_uids[0].agent_id
+    available_actions = sample_env.action_space(sample_agent_id)
 
-class TestSimpleAgent(SelfPlayAgent):
-
-    def __init__(self, rng, env_specs: list[EnvSpec], team_spec: TeamSpec, environments):
-        super(TestSimpleAgent, self).__init__(rng, env_specs, team_spec, environments)
-        sample_env = environments[team_spec.agent_uids[0].env_ix]
-        sample_agent_id = team_spec.agent_uids[0].agent_id
-        self.actions = sample_env.action_space(sample_agent_id)
-        self.rng = rng
-
-    def process_observation(self, obsv):
+    def process_observation(rng, obsv):
         count = obsv.shape[0]
-        actions = []
-        for _ in range(count):
-            key, self.rng = jax.random.split(self.rng)
-            actions.append(self.actions.sample(key))
-        key, self.rng = jax.random.split(self.rng)
-        return jnp.stack(actions), jax.random.normal(key, (count, ))
-
-    def get_action(self, processed_observation):
+        actions = jnp.empty(shape=obsv.shape[0], dtype=int)
+        for i in range(count):
+            rng, key = jax.random.split(rng)
+            actions = actions.at[i].set(available_actions.sample(key))
+        rng, key = jax.random.split(rng)
+        return actions, jax.random.normal(key, (count, ))
+    
+    def get_action(rng, processed_observation):
         return processed_observation[0]
     
-    def update(self):
+    def update(rng, trajectories):
         return None
+    
+    return SelfPlayAgent(
+        process_observation,
+        get_action,
+        update,
+        {}
+    )
+
+
+# class TestSimpleAgentFactory(SelfPlayAgentFactory):
+
+#     def __init__(self, config, env_specs: list[EnvSpec], team_spec: TeamSpec, environments):
+#         super(TestSimpleAgentFactory, self).__init__(config, env_specs, team_spec, environments)
+#         self.config = config
+
+#         sample_env = environments[team_spec.agent_uids[0].env_ix]
+#         sample_agent_id = team_spec.agent_uids[0].agent_id
+#         self.actions = sample_env.action_space(sample_agent_id)
+
+#     def make_fn_process_observation(self, init_rng):
+#         available_actions = self.actions
+#         def process_observation(rng, obsv):
+#             count = obsv.shape[0]
+#             actions = []
+#             for _ in range(count):
+#                 rng, key = jax.random.split(rng)
+#                 actions.append(available_actions.sample(key))
+#             rng, key = jax.random.split(rng)
+#             return jnp.stack(actions), jax.random.normal(key, (count, ))
+#         return process_observation
+    
+#     def make_fn_get_action(self, init_rng):
+#         def get_action(rng, processed_observation):
+#             return processed_observation[0]
+#         return get_action
+    
+#     def make_fn_update(self, init_rng):
+#         def update(rng, trajectories):
+#             return None
+#         return update
     
 
 config = {
     "ENV_STEPS": 25,
+    "NUM_UPDATES": 1,
     "NUM_EPISODES": 3
     # "NUM_ENVS": 3, # 200
     # "NUM_AGENTS": 3, # 32
     # "NUM_STEPS": 25
 }
 
-
-if __name__ == "__main__":
+def main():
     rng = jax.random.PRNGKey(0)
     numpy_seed = 0
 
@@ -86,10 +122,19 @@ if __name__ == "__main__":
     env_mapping = EnvMapping(
         envs=[ EnvSpec("MPE_simple_reference_v3", 8, {}) ],
         teams=[
-            TeamSpec(TestSimpleAgent, 3, [AgentUID(0, 'agent_0'), AgentUID(0, 'agent_1')]),
+            TeamSpec(make_simple_agent, 3, [AgentUID(0, 'agent_0'), AgentUID(0, 'agent_1')]),
             ]
     )
 
-    # stage_1_jit = FCP.make_stage_1(config, env_mapping)
-    stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
-    stage_1_jit(rng)
+    rng, _rng = jax.random.split(rng)
+    stage_1_jit = FCP.make_stage_1(config, env_mapping, numpy_seed)
+    # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
+    episode_metrics, partners = stage_1_jit(_rng)
+
+    rng, _rng = jax.random.split(rng)
+    stage_2_jit = _make_stage_2(config, env_mapping, partners, [make_simple_agent, ], numpy_seed)
+    stage_2_jit(_rng)
+
+
+if __name__ == "__main__":
+    jax.jit(main)()
