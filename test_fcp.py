@@ -108,7 +108,7 @@ def make_simple_agent(init_rng, config, env_specs: list[EnvSpec], team_spec: Tea
 config = {
     "ENV_STEPS": 25,
     "NUM_UPDATES": 1,
-    "NUM_EPISODES": 50
+    "NUM_EPISODES": 100
     # "NUM_ENVS": 3, # 200
     # "NUM_AGENTS": 3, # 32
     # "NUM_STEPS": 25
