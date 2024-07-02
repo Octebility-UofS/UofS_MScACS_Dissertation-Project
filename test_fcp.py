@@ -51,7 +51,7 @@ def make_simple_agent(init_rng, config, env_specs: list[EnvSpec], team_spec: Tea
 
     def process_observation(rng, obsv):
         count = obsv.shape[0]
-        actions = jnp.empty(shape=obsv.shape[0], dtype='int32')
+        actions = jnp.empty(shape=obsv.shape[0], dtype=jnp.int32)
         for i in range(count):
             rng, key = jax.random.split(rng)
             actions = actions.at[i].set(available_actions.sample(key))
@@ -108,7 +108,7 @@ def make_simple_agent(init_rng, config, env_specs: list[EnvSpec], team_spec: Tea
 config = {
     "ENV_STEPS": 25,
     "NUM_UPDATES": 1,
-    "NUM_EPISODES": 100
+    "NUM_EPISODES": 5000
     # "NUM_ENVS": 3, # 200
     # "NUM_AGENTS": 3, # 32
     # "NUM_STEPS": 25

@@ -124,7 +124,7 @@ def make_train(config):
                 log_prob = jnp.array([0.0, ])
 
                 # for now, just select random actions for each
-                action = jnp.zeros(config["NUM_ENVS"] * env.num_agents, dtype='int32')
+                action = jnp.zeros(config["NUM_ENVS"] * env.num_agents, dtype=jnp.int32)
                 for i in range(config["NUM_ENVS"]):
                     for ix, agent_id in enumerate(env.agents):
                         action = action.at[i+ix].set(env.action_space(agent_id).sample(_rng))

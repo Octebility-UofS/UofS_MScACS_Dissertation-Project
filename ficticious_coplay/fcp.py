@@ -143,7 +143,7 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
         # Reverse the process with the stacked actions to use them for stepping the environments
         action_stack = []
         for obsv, _ in env_stack:
-            action_v = { k: jnp.zeros(v.shape[0], dtype='int32') for k, v in obsv.items() }
+            action_v = { k: jnp.zeros(v.shape[0], dtype=jnp.int32) for k, v in obsv.items() }
             action_stack.append(action_v)
             
         for env_ix, (obsv, _) in enumerate(env_stack):
@@ -249,6 +249,26 @@ def _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping: En
     return _update_step
 
 
+def _make_episode(config, env_mapping: EnvMapping, environments, partners, map_agent_uid_to_partner_instance):
+    def _episode(runner_episode, _):
+        env_stacks, rng = runner_episode
+
+        rng, _rng = jax.random.split(rng)
+
+        runner_state = env_stacks, _rng
+        last_runner_state, metrics = jax.lax.scan(
+                _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping, environments, partners),
+                runner_state, None,
+                length=config["NUM_UPDATES"]
+            )
+        env_stacks, rng = last_runner_state
+
+        runner_episode = env_stacks, rng
+        return runner_episode, metrics
+    
+    return _episode
+
+
 
 def _make_stage_1(config, env_mapping: EnvMapping, numpy_seed: int):
     # Key Assumptions:
@@ -283,41 +303,35 @@ def _make_stage_1(config, env_mapping: EnvMapping, numpy_seed: int):
                 )
             partners.append(team_partners)
 
-        episode_metrics = []
-        for episode_ix in range(config["NUM_EPISODES"]):
-            # Randomly sample partners to assign to agents in their respective teams for each environment
-            # Generate this using numpy so that jax can treat it as static values
-            # Important for later splitting up the arrays
-            map_agent_uid_to_partner_instance = dict()
-            for (team_ix, team_spec) in enumerate(env_mapping.teams):
-                for (env_ix, agent_id) in team_spec.agent_uids:
-                    if env_ix not in map_agent_uid_to_partner_instance:
-                        map_agent_uid_to_partner_instance[env_ix] = dict()
-                    partner_count = team_spec.agent_count
-                    env_instance_count = env_mapping.envs[env_ix].count
-                    sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
-                    masks = []
-                    for i in range(partner_count):
-                        masks.append(np.isclose(sampled_partners, i))
-                    map_agent_uid_to_partner_instance[env_ix][agent_id] = (
-                        env_ix,
-                        masks,
-                        partner_count
-                    )
-            
 
-            # Simulate all agents in all environments
-            # and collect the traversed states with associating transition information
-            runner_state = env_stacks, rng
-            last_runner_state, metrics = jax.lax.scan(
-                _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping, environments, partners),
-                runner_state, None,
-                length=config["NUM_UPDATES"]
-            )
+        # We need to randomly sample partner agents to assign them to environment instances
+        # The current assumption is that this random sampling is the same for each episode
+        # Boolean masks are used to be able to split them up during stepping and combine them for each partner instance
+        map_agent_uid_to_partner_instance = dict()
+        for (team_ix, team_spec) in enumerate(env_mapping.teams):
+            for (env_ix, agent_id) in team_spec.agent_uids:
+                if env_ix not in map_agent_uid_to_partner_instance:
+                    map_agent_uid_to_partner_instance[env_ix] = dict()
+                partner_count = team_spec.agent_count
+                env_instance_count = env_mapping.envs[env_ix].count
+                sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
+                masks = []
+                for i in range(partner_count):
+                    masks.append(np.isclose(sampled_partners, i))
+                map_agent_uid_to_partner_instance[env_ix][agent_id] = (
+                    env_ix,
+                    masks,
+                    partner_count
+                )
 
-            env_stacks, rng = last_runner_state
+        # Scan over episodes
+        episode_runner_state = env_stacks, rng
+        last_episode_runner_state, episode_metrics = jax.lax.scan(
+            _make_episode(config, env_mapping, environments, partners, map_agent_uid_to_partner_instance),
+            episode_runner_state, None,
+            length=config["NUM_EPISODES"]
+        )
 
-            episode_metrics.append(metrics)
         return episode_metrics, partners
 
     return _stage_1
@@ -354,78 +368,53 @@ def _make_stage_2(
                 + team_partners
             )
 
-        episode_metrics = []
-        for episode_ix in range(config["NUM_EPISODES"]):
-            # Randomly sample partners to assign to agents in their respective teams for each environment
-            # Generate this using numpy so that jax can treat it as static values
-            # Important for later splitting up the arrays
-            # ====
-            # Key difference to Stage 1 mapping is that all 'partners' are bumped by one index value (+1)
-            # Each environment will only have fcp agent (the one to be trained) 
-            # This will be sampled randomly (which requires a large number of environments to make good training progress)
 
-            # For each environment instance, randomly select one agent that will be the fcp target agent
-            fcp_agent_map = dict()
-            for env_ix, env in enumerate(environments):
-                target_agents = [ env.agents[_i] for _i in np_rng.choice(env.num_agents, env_mapping.envs[env_ix].count) ]
-                fcp_agent_map[env_ix] = target_agents
+        # Randomly sample partners to assign to agents in their respective teams for each environment
+        # Generate this using numpy so that jax can treat it as static values
+        # Important for later splitting up the arrays
+        # ====
+        # Key difference to Stage 1 mapping is that all 'partners' are bumped by one index value (+1)
+        # Each environment will only have fcp agent (the one to be trained) 
+        # This will be sampled randomly (which requires a large number of environments to make good training progress)
 
-            map_agent_uid_to_partner_instance = dict()
-            for (team_ix, team_partners) in enumerate(modified_partners):
-                for (env_ix, agent_id) in env_mapping.teams[env_ix].agent_uids:
-                    if env_ix not in map_agent_uid_to_partner_instance:
-                        map_agent_uid_to_partner_instance[env_ix] = dict()
-                    partner_count = len(team_partners)
-                    env_instance_count = env_mapping.envs[env_ix].count
-                    # Add +1 after sampling because we want to ignore the target fcp agent at index 0
-                    # Choice range is -1 actual to account for that
-                    sampled_partners = np_rng.choice(partner_count-1, size=(env_instance_count, ))+1
-                    # Replace the 'sampled_partners' with 0 index according to 'fcp_agent_map'
-                    for _i in range(sampled_partners.shape[0]):
-                        if fcp_agent_map[env_ix][_i] == agent_id:
-                            sampled_partners[_i] = 0
-                    # Continue as with stage 1 with masking
-                    masks = []
-                    for i in range(partner_count):
-                        masks.append(np.isclose(sampled_partners, i))
-                    map_agent_uid_to_partner_instance[env_ix][agent_id] = (
-                        env_ix,
-                        masks,
-                        partner_count
-                    )
+        # For each environment instance, randomly select one agent that will be the fcp target agent
+        fcp_agent_map = dict()
+        for env_ix, env in enumerate(environments):
+            target_agents = [ env.agents[_i] for _i in np_rng.choice(env.num_agents, env_mapping.envs[env_ix].count) ]
+            fcp_agent_map[env_ix] = target_agents
 
+        map_agent_uid_to_partner_instance = dict()
+        for (team_ix, team_partners) in enumerate(modified_partners):
+            for (env_ix, agent_id) in env_mapping.teams[env_ix].agent_uids:
+                if env_ix not in map_agent_uid_to_partner_instance:
+                    map_agent_uid_to_partner_instance[env_ix] = dict()
+                partner_count = len(team_partners)
+                env_instance_count = env_mapping.envs[env_ix].count
+                # Add +1 after sampling because we want to ignore the target fcp agent at index 0
+                # Choice range is -1 actual to account for that
+                sampled_partners = np_rng.choice(partner_count-1, size=(env_instance_count, ))+1
+                # Replace the 'sampled_partners' with 0 index according to 'fcp_agent_map'
+                for _i in range(sampled_partners.shape[0]):
+                    if fcp_agent_map[env_ix][_i] == agent_id:
+                        sampled_partners[_i] = 0
+                # Continue as with stage 1 with masking
+                masks = []
+                for i in range(partner_count):
+                    masks.append(np.isclose(sampled_partners, i))
+                map_agent_uid_to_partner_instance[env_ix][agent_id] = (
+                    env_ix,
+                    masks,
+                    partner_count
+                )
 
-
-            # for (team_ix, team_spec) in enumerate(env_mapping.teams):
-            #     for (env_ix, agent_id) in team_spec.agent_uids:
-            #         if env_ix not in map_agent_uid_to_partner_instance:
-            #             map_agent_uid_to_partner_instance[env_ix] = dict()
-            #         partner_count = team_spec.agent_count
-            #         env_instance_count = env_mapping.envs[env_ix].count
-            #         # Add the +1 because 0 indexes will always be the 'fcp agents'
-            #         sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))+1
-            #         masks = []
-            #         for i in range(partner_count):
-            #             masks.append(np.isclose(sampled_partners, i))
-            #         map_agent_uid_to_partner_instance[env_ix][agent_id] = (
-            #             env_ix,
-            #             masks,
-            #             partner_count
-            #         )
-            
-
-            # Simulate all agents in all environments
-            # and collect the traversed states with associating transition information
-            runner_state = env_stacks, rng
-            last_runner_state, metrics = jax.lax.scan(
-                _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping, environments, modified_partners),
-                runner_state, None,
-                length=config["NUM_UPDATES"]
-            )
-
-            env_stacks, rng = last_runner_state
-
-            episode_metrics.append(metrics)
+         # Scan over episodes
+        episode_runner_state = env_stacks, rng
+        last_episode_runner_state, episode_metrics = jax.lax.scan(
+            _make_episode(config, env_mapping, environments, modified_partners, map_agent_uid_to_partner_instance),
+            episode_runner_state, None,
+            length=config["NUM_EPISODES"]
+        )
+        
         return episode_metrics, partners
 
     return _stage_2
