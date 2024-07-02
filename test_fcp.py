@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from copy import deepcopy
+from datetime import datetime
 from typing import Any, NamedTuple, Sequence, Type
 
 import distrax
@@ -107,7 +108,7 @@ def make_simple_agent(init_rng, config, env_specs: list[EnvSpec], team_spec: Tea
 config = {
     "ENV_STEPS": 25,
     "NUM_UPDATES": 1,
-    "NUM_EPISODES": 3
+    "NUM_EPISODES": 50
     # "NUM_ENVS": 3, # 200
     # "NUM_AGENTS": 3, # 32
     # "NUM_STEPS": 25
@@ -120,9 +121,9 @@ def main():
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
     env_mapping = EnvMapping(
-        envs=[ EnvSpec("MPE_simple_reference_v3", 8, {}) ],
+        envs=[ EnvSpec("MPE_simple_reference_v3", 200, {}) ],
         teams=[
-            TeamSpec(make_simple_agent, 3, [AgentUID(0, 'agent_0'), AgentUID(0, 'agent_1')]),
+            TeamSpec(make_simple_agent, 8, [AgentUID(0, 'agent_0'), AgentUID(0, 'agent_1')]),
             ]
     )
 
@@ -131,10 +132,14 @@ def main():
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     episode_metrics, partners = stage_1_jit(_rng)
 
+    team_fcp_agents = [make_simple_agent, ]
     rng, _rng = jax.random.split(rng)
-    stage_2_jit = _make_stage_2(config, env_mapping, partners, [make_simple_agent, ], numpy_seed)
+    stage_2_jit = _make_stage_2(config, env_mapping, partners, team_fcp_agents, numpy_seed)
     stage_2_jit(_rng)
 
 
 if __name__ == "__main__":
+    start_time = datetime.now()
     jax.jit(main)()
+    stop_time = datetime.now()
+    print(f"Elapsed {stop_time-start_time}")
