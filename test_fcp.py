@@ -13,12 +13,13 @@ from flax import serialization
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jaxmarl.environments import SimpleReferenceMPE
+from jaxmarl.environments.overcooked import overcooked_layouts
+import optax
 
-from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, SelfPlayAgentFactory, TeamSpec, _make_stage_2
+from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec, _make_stage_2
 
 
 class SimpleNetwork(nn.Module):
-    input_dim: Sequence[int] # observation_space_dim
     output_dim: Sequence[int] # action_space_dim
     activation = "relu"
 
@@ -44,71 +45,158 @@ class SimpleNetwork(nn.Module):
         return pi, value_squeezed
     
 
-def make_simple_agent(init_rng, config, env_specs: list[EnvSpec], team_spec: TeamSpec, environments):
-    sample_env = environments[team_spec.agent_uids[0].env_ix]
-    sample_agent_id = team_spec.agent_uids[0].agent_id
-    available_actions = sample_env.action_space(sample_agent_id)
 
-    def process_observation(rng, obsv):
-        count = obsv.shape[0]
-        actions = jnp.empty(shape=obsv.shape[0], dtype=jnp.int32)
-        for i in range(count):
-            rng, key = jax.random.split(rng)
-            actions = actions.at[i].set(available_actions.sample(key))
-        rng, key = jax.random.split(rng)
-        return actions, jax.random.normal(key, (count, ))
-    
-    def get_action(rng, processed_observation):
-        return processed_observation[0]
-    
-    def update(rng, trajectories):
-        return None
-    
-    return SelfPlayAgent(
-        process_observation,
-        get_action,
-        update,
-        {}
+def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env):
+    network = SimpleNetwork(env.action_space().n)
+    init_x = jnp.zeros(env.observation_space().shape)
+    init_x = init_x.flatten()
+    init_rng, _rng = jax.random.split(init_rng)
+    network_params = network.init(_rng, init_x)
+    tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]), optax.adam(config["LR"], eps=1e-5))
+
+    init_agent_state = {}
+    init_agent_state["eval"] = False
+    init_agent_state["train_state"] = TrainState.create(
+        apply_fn=network.apply,
+        params=network_params,
+        tx=tx,
     )
 
+    def get_action(rng, obsv, flattened_obsv, agent_state):
+        pi, value = network.apply(agent_state["train_state"].params, flattened_obsv)
+        rng, _rng = jax.random.split(rng)
+        action = pi.sample(seed=_rng)
+        log_prob = pi.log_prob(action)
+        return agent_state, action, (pi, value, log_prob)
+    
 
-# class TestSimpleAgentFactory(SelfPlayAgentFactory):
+    # This actually seems to be IPPO loss
+    # TODO
+    def _loss_fn(net_train_state_params, traj_batch, gae, targets):
+        # net_train_state_params = agent_state["train_state"].params
+        # gae = Advantages
+        # RERUN NETWORK
+        flattened_obs = traj_batch.obs.reshape((traj_batch.obs.shape[0], traj_batch.obs.shape[1], -1))
+        pi, value = network.apply(net_train_state_params, flattened_obs)
+        log_prob = pi.log_prob(traj_batch.action)
 
-#     def __init__(self, config, env_specs: list[EnvSpec], team_spec: TeamSpec, environments):
-#         super(TestSimpleAgentFactory, self).__init__(config, env_specs, team_spec, environments)
-#         self.config = config
+        # CALCULATE VALUE LOSS
+        # traj_batch.processed_observation[1] == traj_batch.value
+        value_pred_clipped = traj_batch.processed_observation[1] + (
+            value - traj_batch.processed_observation[1]
+        ).clip(-config["CLIP_EPS"], config["CLIP_EPS"])
+        value_losses = jnp.square(value - targets)
+        value_losses_clipped = jnp.square(value_pred_clipped - targets)
+        value_loss = (
+            0.5 * jnp.maximum(value_losses, value_losses_clipped).mean()
+        )
 
-#         sample_env = environments[team_spec.agent_uids[0].env_ix]
-#         sample_agent_id = team_spec.agent_uids[0].agent_id
-#         self.actions = sample_env.action_space(sample_agent_id)
+        # CALCULATE ACTOR LOSS
+        # traj_batch.processed_observation[2] == traj_batch.log_prob
+        ratio = jnp.exp(log_prob - traj_batch.processed_observation[2])
+        gae = (gae - gae.mean()) / (gae.std() + 1e-8)
+        loss_actor1 = ratio * gae
+        loss_actor2 = (
+            jnp.clip(
+                ratio,
+                1.0 - config["CLIP_EPS"],
+                1.0 + config["CLIP_EPS"],
+            )
+            * gae
+        )
+        loss_actor = -jnp.minimum(loss_actor1, loss_actor2)
+        loss_actor = loss_actor.mean()
+        entropy = pi.entropy().mean()
 
-#     def make_fn_process_observation(self, init_rng):
-#         available_actions = self.actions
-#         def process_observation(rng, obsv):
-#             count = obsv.shape[0]
-#             actions = []
-#             for _ in range(count):
-#                 rng, key = jax.random.split(rng)
-#                 actions.append(available_actions.sample(key))
+        total_loss = (
+            loss_actor
+            + config["VF_COEF"] * value_loss
+            - config["ENT_COEF"] * entropy
+        )
+        return total_loss, (value_loss, loss_actor, entropy)
+
+
+    def update(rng, trajectories, agent_state):
+        done, actions, aux_data, reward, observations, info = trajectories
+
+        # CALCULATE ADVANTAGE
+        # This seems to be the same for PPO and IPPO
+        flattened_last_obsv = observations[-1].reshape((observations[-1].shape[0], -1))
+        last_val = network.apply(agent_state["train_state"].params, flattened_last_obsv)[1]
+
+        def _calculate_gae(traj_batch, last_val):
+            def _get_advantages(gae_and_next_value, transition):
+                gae, next_value = gae_and_next_value
+                done, value, reward = (
+                    transition.done,
+                    transition.processed_observation[1],
+                    transition.reward,
+                )
+                delta = reward + config["GAMMA"] * next_value * (1 - done) - value
+                gae = (
+                    delta
+                    + config["GAMMA"] * config["GAE_LAMBDA"] * (1 - done) * gae
+                )
+                return (gae, value), gae
+
+            _, advantages = jax.lax.scan(
+                _get_advantages,
+                (jnp.zeros_like(last_val), last_val),
+                traj_batch,
+                reverse=True,
+                unroll=16,
+            )
+            return advantages, advantages + traj_batch.processed_observation[1] # advantages + values
+
+        advantages, targets = _calculate_gae(trajectories, last_val)
+
+        grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
+        total_loss, gradients = grad_fn(agent_state["train_state"].params, trajectories, advantages, targets)
+        agent_state["train_state"] = agent_state["train_state"].apply_gradients(grads=gradients)
+
+        return agent_state, total_loss
+    
+    return SelfPlayAgent(
+        get_action,
+        update
+    ), init_agent_state
+    
+
+# def make_simple_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env):
+#     sample_agent_id = team_spec.agent_uids[0]
+#     available_actions = env.action_space(sample_agent_id)
+#     init_agent_state = {}
+
+#     def get_action(rng, obsv, flattened_obsv, agent_state):
+#         count = obsv.shape[0]
+#         actions = jnp.empty(shape=obsv.shape[0], dtype=jnp.int32)
+#         for i in range(count):
 #             rng, key = jax.random.split(rng)
-#             return jnp.stack(actions), jax.random.normal(key, (count, ))
-#         return process_observation
+#             actions = actions.at[i].set(available_actions.sample(key))
+#         rng, key = jax.random.split(rng)
+#         return agent_state, actions, (jax.random.normal(key, (count, )), )
     
-#     def make_fn_get_action(self, init_rng):
-#         def get_action(rng, processed_observation):
-#             return processed_observation[0]
-#         return get_action
+#     def update(rng, trajectories, agent_state):
+#         return agent_state, None
     
-#     def make_fn_update(self, init_rng):
-#         def update(rng, trajectories):
-#             return None
-#         return update
+#     return SelfPlayAgent(
+#         get_action,
+#         update
+#     ), init_agent_state
     
 
 config = {
-    "ENV_STEPS": 25,
-    "NUM_UPDATES": 1,
-    "NUM_EPISODES": 5000
+    "ENV_STEPS": 1e3/100,
+    "NUM_UPDATES": 100,
+    "NUM_EPISODES": 6,
+    # "ANNEAL_LR": True,
+    "MAX_GRAD_NORM": 0.5,
+    "LR": 2.5e-4,
+    "GAMMA": 0.99,
+    "GAE_LAMBDA": 0.95,
+    "CLIP_EPS": 0.2,
+    "ENT_COEF": 0.01,
+    "VF_COEF": 0.5,
     # "NUM_ENVS": 3, # 200
     # "NUM_AGENTS": 3, # 32
     # "NUM_STEPS": 25
@@ -120,26 +208,25 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_mapping = EnvMapping(
-        envs=[ EnvSpec("MPE_simple_reference_v3", 200, {}) ],
-        teams=[
-            TeamSpec(make_simple_agent, 8, [AgentUID(0, 'agent_0'), AgentUID(0, 'agent_1')]),
-            ]
-    )
+    env_spec = EnvSpec("overcooked", 20, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 3, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
-    stage_1_jit = FCP.make_stage_1(config, env_mapping, numpy_seed)
+    stage_1_jit = FCP.make_stage_1(config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     episode_metrics, partners = stage_1_jit(_rng)
 
-    team_fcp_agents = [make_simple_agent, ]
+    return episode_metrics
+
+    team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
-    stage_2_jit = _make_stage_2(config, env_mapping, partners, team_fcp_agents, numpy_seed)
+    stage_2_jit = _make_stage_2(config, env_spec, teams, partners, team_fcp_agents, numpy_seed)
     stage_2_jit(_rng)
 
 
 if __name__ == "__main__":
     start_time = datetime.now()
-    jax.jit(main)()
+    res = jax.jit(main)()
     stop_time = datetime.now()
     print(f"Elapsed {stop_time-start_time}")
+    print(res)

@@ -52,39 +52,8 @@ agents are randomly assigned to environments
 """
 
 class SelfPlayAgent(NamedTuple):
-    process_observation: Callable[[jnp.ndarray], Any] # obs_v -> processed_observation
-    get_action: Callable[[Any], jnp.ndarray] # processed_observation -> actions_v
-    update: Callable[[Any, Any, Any], Any] # config, rng, trajectories -> metrics
-    attrs: dict[str, Any] # Dict of object attributes, this helps keep all functions pure
-    
-
-class SelfPlayAgentFactory:
-    def __init__(self, config, env_specs: list[EnvSpec], team_spec: TeamSpec, environments):
-        self.attrs = {"eval": False}
-
-    def create(self, init_rng):
-        agent = SelfPlayAgent(
-            self.make_fn_process_observation(init_rng),
-            self.make_fn_get_action(init_rng),
-            self.make_fn_update(init_rng),
-            self.attrs
-        )
-        return agent
-    
-    def make_fn_process_observation(self, init_rng):
-        def process_observation(obsv):
-            raise NotImplementedError("This interface method needs to be subclassed")
-        return process_observation
-    
-    def make_fn_get_action(self, init_rng):
-        def get_action(processed_observation):
-            raise NotImplementedError("This interface method needs to be subclassed")
-        return get_action
-    
-    def make_fn_update(self, init_rng):
-        def update(config, rng, trajectories):
-            raise NotImplementedError("This interface method needs to be subclassed")
-        return update
+    get_action: Callable[[Any, jnp.ndarray, jnp.ndarray, Any], tuple[Any, jnp.ndarray, Any]] # rng, obs_v, flattened_obs_v, agent_state -> update_agent_state, actions_v, aux_data
+    update: Callable[[Any, Any, Any], tuple[Any, Any]] # config, rng, trajectories -> updated_agent_state, metrics
     
 
 class Transition(NamedTuple):
@@ -96,38 +65,47 @@ class Transition(NamedTuple):
     info: jnp.ndarray
     
 
-def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.Array], int], env_mapping: EnvMapping, environments, partners):
+def _make_envs_step(
+    map_agent_uid_to_partner_instance: dict[int, dict[str, jax.Array], int],
+    env_spec: EnvSpec, env,
+    partners: list[list[SelfPlayAgent]]
+    ):
     def _envs_step(runner_state, _):
-        env_stack, rng = runner_state
+        env_obsv_state, partner_states, rng = runner_state
 
         transformed_observations = []
         transformed_actions = []
         transformed_stacked_observations = [] # Stacked (batched) tensor of observations per agent
         transformed_stacked_actions = [] # Stacked (batched) tensor of actions per agent
-        transformed_stacked_processed_agent_osbv = [] # Whatever is returned by an agent when an observation is passed
+        transformed_stacked_agent_aux_data = [] # Whatever is returned by an agent when an observation is passed
         for team_partners in partners:
             transformed_observations.append([ [] for p in team_partners ])
             transformed_actions.append([ [] for p in team_partners ])
             transformed_stacked_observations.append([ [] for p in team_partners ])
             transformed_stacked_actions.append([ [] for p in team_partners ])
-            transformed_stacked_processed_agent_osbv.append([ [] for p in team_partners ])
+            transformed_stacked_agent_aux_data.append([ [] for p in team_partners ])
 
         # Transform all observation vectors to group them by partner agents
-        for env_ix, (obsv, _) in enumerate(env_stack):
-            sorted_items = sorted(map_agent_uid_to_partner_instance[env_ix].items(), key=lambda t: t[0])
-            for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
-                for i in range(num_partner_instances):
-                    transformed_observations[team_ix][i].append(obsv[agent_id][masks[i]])
+        env_obsv, env_state = env_obsv_state
+        sorted_items = sorted(map_agent_uid_to_partner_instance.items(), key=lambda t: t[0])
+        for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
+            for i in range(num_partner_instances):
+                transformed_observations[team_ix][i].append(env_obsv[agent_id][masks[i]])
 
 
         # Run each transformed stack of observations through their respective parntner agents
+        updated_partner_states = []
         for team_ix, team_partners in enumerate(partners):
+            team_updated_partner_states = []
             for p_ix, partner in enumerate(team_partners):
+                agent_state = partner_states[team_ix][p_ix]
                 stacked_obsv = jnp.concatenate(transformed_observations[team_ix][p_ix], axis=0)
+                flattened_stacked_obsv = stacked_obsv.reshape((stacked_obsv.shape[0], -1))
+
                 rng, _rng = jax.random.split(rng)
-                processed = partner.process_observation(_rng, stacked_obsv)
-                rng, _rng = jax.random.split(rng)
-                stacked_actions = partner.get_action(_rng, processed)
+                agent_state, stacked_actions, agent_aux_data = partner.get_action(_rng, stacked_obsv, flattened_stacked_obsv, agent_state)
+
+                team_updated_partner_states.append(agent_state)
 
                 obsv_shapes = np.array([ a.shape[0] for a in transformed_observations[team_ix][p_ix] ])
                 fragmented_actions = jnp.split(stacked_actions, np.cumsum(obsv_shapes))
@@ -137,38 +115,35 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
                 # Avoid additional re-computation while trading off increased memory requirements
                 transformed_stacked_observations[team_ix][p_ix] = stacked_obsv
                 transformed_stacked_actions[team_ix][p_ix] = stacked_actions
-                transformed_stacked_processed_agent_osbv[team_ix][p_ix] = processed
+                transformed_stacked_agent_aux_data[team_ix][p_ix] = agent_aux_data
+            updated_partner_states.append(team_updated_partner_states)
 
 
         # Reverse the process with the stacked actions to use them for stepping the environments
-        action_stack = []
-        for obsv, _ in env_stack:
-            action_v = { k: jnp.zeros(v.shape[0], dtype=jnp.int32) for k, v in obsv.items() }
-            action_stack.append(action_v)
-            
-        for env_ix, (obsv, _) in enumerate(env_stack):
-            sorted_items = sorted(map_agent_uid_to_partner_instance[env_ix].items(), key=lambda t: t[0])
-            for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
-                for i in range(num_partner_instances):
-                    mask = masks[i]
-                    action_v = action_stack[env_ix]
-                    a_fragment = transformed_actions[team_ix][i].pop(0)
-                    action_v[agent_id] = action_v[agent_id].at[mask].set(a_fragment)
+        env_obsv, env_state = env_obsv_state
+        action_v = { k: jnp.zeros(v.shape[0], dtype=jnp.int32) for k, v in env_obsv.items() }
+
+        sorted_items = sorted(map_agent_uid_to_partner_instance.items(), key=lambda t: t[0])
+        for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
+            for i in range(num_partner_instances):
+                mask = masks[i]
+                a_fragment = transformed_actions[team_ix][i].pop(0)
+                action_v[agent_id] = action_v[agent_id].at[mask].set(a_fragment)
+        env_act = action_v
 
         
         #STEP ENVIRONMENTS
         updated_env_stack = []
         env_step_data = []
-        for env_ix, env in enumerate(environments):
-            rng, _rng = jax.random.split(rng)
-            rng_step = jax.random.split(_rng, env_mapping.envs[env_ix].count)
-            env_state = env_stack[env_ix][1]
-            env_act = action_stack[env_ix]
-            obsv, env_state, reward, done, info = jax.vmap(
-                    env.step, in_axes=(0,0,0)
-                )(rng_step, env_state, env_act)
-            updated_env_stack.append( (obsv, env_state) )
-            env_step_data.append( (obsv, env_state, reward, done, info) )
+        env_obsv, env_state = env_obsv_state
+        env_act = env_act
+        rng, _rng = jax.random.split(rng)
+        rng_step = jax.random.split(_rng, env_spec.count)
+        obsv, env_state, reward, done, info = jax.vmap(
+                env.step, in_axes=(0,0,0)
+            )(rng_step, env_state, env_act)
+        updated_env_obsv_state = obsv, env_state
+        env_step_data = (obsv, env_state, reward, done, info)
 
         # COLLECT TRANSITIONS FOR EACH AGENT
         # Will be later passed to update functions for each agent
@@ -182,15 +157,13 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
         # info is different because it is on a per-environment basis
         # TODO figure out how to deal with this (not very clear in documentation)
         # transformed_stacked_info = []
-        for env_ix, (obsv, _) in enumerate(env_stack):
-            _, _, reward, done, info = env_step_data[env_ix]
-            sorted_items = sorted(map_agent_uid_to_partner_instance[env_ix].items(), key=lambda t: t[0])
-            for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
-                for i in range(num_partner_instances):
-                    transformed_reward[team_ix][i].append(reward[agent_id][masks[i]])
-                    transformed_done[team_ix][i].append(done[agent_id][masks[i]])
-                    # TODO
-                    # transformed_stacked_info[team_ix][i].append(info[agent_id][masks[i]])
+        sorted_items = sorted(map_agent_uid_to_partner_instance.items(), key=lambda t: t[0])
+        for agent_id, (team_ix, masks, num_partner_instances) in sorted_items:
+            for i in range(num_partner_instances):
+                transformed_reward[team_ix][i].append(reward[agent_id][masks[i]])
+                transformed_done[team_ix][i].append(done[agent_id][masks[i]])
+                # TODO
+                # transformed_stacked_info[team_ix][i].append(info[agent_id][masks[i]])
         # Concatenate reward and done fragmented arrays
         for team_ix in range(len(transformed_reward)):
             team_stacked_reward = []
@@ -208,26 +181,30 @@ def _make_envs_step(map_agent_uid_to_partner_instance: dict[int, dict[str, jax.A
                 agent_transitions[team_ix].append(Transition(
                     transformed_stacked_done[team_ix][p_ix],
                     transformed_stacked_actions[team_ix][p_ix],
-                    transformed_stacked_processed_agent_osbv[team_ix][p_ix],
+                    transformed_stacked_agent_aux_data[team_ix][p_ix],
                     transformed_stacked_reward[team_ix][p_ix],
                     transformed_stacked_observations[team_ix][p_ix],
-                    {} # TODO
+                    {} # TODO Info info = jax.tree_map(lambda x: x.reshape((config["NUM_ACTORS"])), info)
                 ))
 
 
         
-        runner_state = updated_env_stack, rng
+        runner_state = updated_env_obsv_state, updated_partner_states, rng
         return runner_state, agent_transitions
 
 
     return _envs_step
 
 
-def _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping: EnvMapping, environments, partners: list[list[SelfPlayAgent]]):
+def _make_update_step(
+    config, map_agent_uid_to_partner_instance,
+    env_spec: EnvSpec, teams: list[TeamSpec], env,
+    partners: list[list[SelfPlayAgent]]
+    ):
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], _):
         # Collect Trajectories
         runner_state, trajectories = jax.lax.scan(
-            _make_envs_step(map_agent_uid_to_partner_instance, env_mapping, environments, partners),
+            _make_envs_step(map_agent_uid_to_partner_instance, env_spec, env, partners),
             runner_state, None,
             length=config["ENV_STEPS"]
         )
@@ -235,99 +212,89 @@ def _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping: En
 
         # Update each agent given their trajectories
         metrics = []
-        env_stack, rng = runner_state
+        env_obsv_state, partner_states, rng = runner_state
+        updated_partner_states = []
         for team_ix, team_partners in enumerate(partners):
             team_metrics = []
+            team_updated_partner_states = []
             for p_ix, partner in enumerate(team_partners):
                 rng, _rng = jax.random.split(rng)
-                update_metrics = partner.update(_rng, trajectories[team_ix][p_ix])
+                updated_partner_state, update_metrics = partner.update(_rng, trajectories[team_ix][p_ix], partner_states[team_ix][p_ix])
                 team_metrics.append(update_metrics)
+                team_updated_partner_states.append(updated_partner_state)
             metrics.append(team_metrics)
+            updated_partner_states.append(team_updated_partner_states)
 
-        runner_state = env_stack, rng
+        runner_state = env_obsv_state, updated_partner_states, rng
         return runner_state, metrics
     return _update_step
 
 
-def _make_episode(config, env_mapping: EnvMapping, environments, partners, map_agent_uid_to_partner_instance):
+def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partners, map_agent_uid_to_partner_instance):
     def _episode(runner_episode, _):
-        env_stacks, rng = runner_episode
+        env_obsv_state, partner_states, rng = runner_episode
 
         rng, _rng = jax.random.split(rng)
 
-        runner_state = env_stacks, _rng
+        runner_state = env_obsv_state, partner_states, _rng
         last_runner_state, metrics = jax.lax.scan(
-                _make_update_step(config, map_agent_uid_to_partner_instance, env_mapping, environments, partners),
+                _make_update_step(config, map_agent_uid_to_partner_instance, env_spec, teams, env, partners),
                 runner_state, None,
                 length=config["NUM_UPDATES"]
             )
-        env_stacks, rng = last_runner_state
+        env_obsv_state, partner_states, rng = last_runner_state
 
-        runner_episode = env_stacks, rng
+        runner_episode = env_obsv_state, partner_states, rng
         return runner_episode, metrics
     
     return _episode
 
 
 
-def _make_stage_1(config, env_mapping: EnvMapping, numpy_seed: int):
-    # Key Assumptions:
-    # - Every agent in the environment has
-    #   - the same action space
-    #   - the same observation space
+def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: int):
 
-    # In practice, each environment in the env mapping is parallelised separately
-    # since we have no guarantee that action/observation spaces all match up
-    environments = []
-    for _env in env_mapping.envs:
-        environments.append(jaxmarl.make(_env.env_id))
+    env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
 
     np_rng = np.random.default_rng(numpy_seed)
 
     def _stage_1(rng):
         # Create all parallelised environments
-        env_stacks = []
-        for env_ix, env in enumerate(environments):
-            rng_array = jax.random.split(rng, env_mapping.envs[env_ix].count)
-            obsv, env_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
-            env_stacks.append( (obsv, env_state) )
+        rng_array = jax.random.split(rng, env_spec.count)
+        env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
 
         # Create all parallelised partner agents for each team
         partners = []
-        for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(env_mapping.teams):
+        partner_states = []
+        for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
             team_partners = []
+            team_partner_states = []
             for _ in range(partner_count):
                 rng, _rng = jax.random.split(rng)
-                team_partners.append(
-                    cls_SelfPlayAgent(_rng, config, env_mapping.envs, env_mapping.teams[team_ix], environments)
-                )
+                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env)
+                team_partners.append(partner)
+                team_partner_states.append(partner_state)
             partners.append(team_partners)
+            partner_states.append(team_partner_states)
 
 
         # We need to randomly sample partner agents to assign them to environment instances
         # The current assumption is that this random sampling is the same for each episode
         # Boolean masks are used to be able to split them up during stepping and combine them for each partner instance
         map_agent_uid_to_partner_instance = dict()
-        for (team_ix, team_spec) in enumerate(env_mapping.teams):
-            for (env_ix, agent_id) in team_spec.agent_uids:
-                if env_ix not in map_agent_uid_to_partner_instance:
-                    map_agent_uid_to_partner_instance[env_ix] = dict()
+        for (team_ix, team_spec) in enumerate(teams):
+            for agent_id in team_spec.agent_uids:
                 partner_count = team_spec.agent_count
-                env_instance_count = env_mapping.envs[env_ix].count
+                env_instance_count = env_spec.count
                 sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
                 masks = []
                 for i in range(partner_count):
                     masks.append(np.isclose(sampled_partners, i))
-                map_agent_uid_to_partner_instance[env_ix][agent_id] = (
-                    env_ix,
-                    masks,
-                    partner_count
-                )
+                map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
 
         # Scan over episodes
-        episode_runner_state = env_stacks, rng
+        episode_runner_state = env_obsv_state, partner_states, rng
         last_episode_runner_state, episode_metrics = jax.lax.scan(
-            _make_episode(config, env_mapping, environments, partners, map_agent_uid_to_partner_instance),
+            _make_episode(config, env_spec, teams, env, partners, map_agent_uid_to_partner_instance),
             episode_runner_state, None,
             length=config["NUM_EPISODES"]
         )
@@ -340,33 +307,46 @@ def _make_stage_1(config, env_mapping: EnvMapping, numpy_seed: int):
 
 def _make_stage_2(
     config,
-    env_mapping: EnvMapping,
+    env_spec: EnvSpec, teams: list[TeamSpec],
     partners: list[list[SelfPlayAgent]],
     cls_team_actors: list[Type[SelfPlayAgent]],
     numpy_seed: int
     ):
-    environments = []
-    for _env in env_mapping.envs:
-        environments.append(jaxmarl.make(_env.env_id))
+
+    env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
 
     np_rng = np.random.default_rng(numpy_seed)
 
     def _stage_2(rng):
-        # Create all parallelised environments
-        env_stacks = []
-        for env_ix, env in enumerate(environments):
-            rng_array = jax.random.split(rng, env_mapping.envs[env_ix].count)
-            obsv, env_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
-            env_stacks.append( (obsv, env_state) )
+       # Create all parallelised environments
+        rng_array = jax.random.split(rng, env_spec.count)
+        env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
 
-        # Add the fcp agent of each team to a modified list of partner agents
+        # # Add the fcp agent of each team to a modified list of partner agents
+        # modified_partners = []
+        # for team_ix, team_partners in enumerate(partners):
+        #     rng, _rng = jax.random.split(rng)
+        #     modified_partners.append(
+        #         [ cls_team_actors[team_ix](_rng, config, env_spec, teams[team_ix], env) ]
+        #         + team_partners
+        #     )
+        # Create all parallelised partner agents for each team
         modified_partners = []
-        for team_ix, team_partners in enumerate(partners):
+        partner_states = []
+        for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
+            team_partners = []
+            team_partner_states = []
             rng, _rng = jax.random.split(rng)
-            modified_partners.append(
-                [ cls_team_actors[team_ix](_rng, config, env_mapping.envs, env_mapping.teams[team_ix], environments) ]
-                + team_partners
-            )
+            fcp_partner, fcp_partner_state = cls_team_actors[team_ix](_rng, config, env_spec, teams[team_ix], env)
+            team_partners.append(fcp_partner)
+            team_partner_states.append(fcp_partner_state)
+            for _ in range(partner_count):
+                rng, _rng = jax.random.split(rng)
+                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env)
+                team_partners.append(partner)
+                team_partner_states.append(partner_state)
+            modified_partners.append(team_partners)
+            partner_states.append(team_partner_states)
 
 
         # Randomly sample partners to assign to agents in their respective teams for each environment
@@ -377,40 +357,31 @@ def _make_stage_2(
         # Each environment will only have fcp agent (the one to be trained) 
         # This will be sampled randomly (which requires a large number of environments to make good training progress)
 
-        # For each environment instance, randomly select one agent that will be the fcp target agent
-        fcp_agent_map = dict()
-        for env_ix, env in enumerate(environments):
-            target_agents = [ env.agents[_i] for _i in np_rng.choice(env.num_agents, env_mapping.envs[env_ix].count) ]
-            fcp_agent_map[env_ix] = target_agents
+        # Randomly select one agent that will be the fcp target agent
+        target_agents = [ env.agents[_i] for _i in np_rng.choice(env.num_agents, env_spec.count) ]
 
         map_agent_uid_to_partner_instance = dict()
         for (team_ix, team_partners) in enumerate(modified_partners):
-            for (env_ix, agent_id) in env_mapping.teams[env_ix].agent_uids:
-                if env_ix not in map_agent_uid_to_partner_instance:
-                    map_agent_uid_to_partner_instance[env_ix] = dict()
+            for agent_id in teams[team_ix].agent_uids:
                 partner_count = len(team_partners)
-                env_instance_count = env_mapping.envs[env_ix].count
+                env_instance_count = env_spec.count
                 # Add +1 after sampling because we want to ignore the target fcp agent at index 0
                 # Choice range is -1 actual to account for that
                 sampled_partners = np_rng.choice(partner_count-1, size=(env_instance_count, ))+1
                 # Replace the 'sampled_partners' with 0 index according to 'fcp_agent_map'
                 for _i in range(sampled_partners.shape[0]):
-                    if fcp_agent_map[env_ix][_i] == agent_id:
+                    if target_agents[_i] == agent_id:
                         sampled_partners[_i] = 0
                 # Continue as with stage 1 with masking
                 masks = []
                 for i in range(partner_count):
                     masks.append(np.isclose(sampled_partners, i))
-                map_agent_uid_to_partner_instance[env_ix][agent_id] = (
-                    env_ix,
-                    masks,
-                    partner_count
-                )
+                map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
 
          # Scan over episodes
-        episode_runner_state = env_stacks, rng
+        episode_runner_state = env_obsv_state, partner_states, rng
         last_episode_runner_state, episode_metrics = jax.lax.scan(
-            _make_episode(config, env_mapping, environments, modified_partners, map_agent_uid_to_partner_instance),
+            _make_episode(config, env_spec, teams, env, modified_partners, map_agent_uid_to_partner_instance),
             episode_runner_state, None,
             length=config["NUM_EPISODES"]
         )
@@ -423,9 +394,15 @@ def _make_stage_2(
 
 class FCP:
     @staticmethod
-    def make_stage_1(config, env_mapping: EnvMapping, numpy_seed:int):
-        return _make_stage_1(config, env_mapping, numpy_seed)
+    def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
+        return _make_stage_1(config, env_spec, teams, numpy_seed)
 
     @staticmethod
-    def make_stage_2(config, partners: list[list[SelfPlayAgent]], cls_team_actors: list[Type[SelfPlayAgent]]):
-        return _make_stage_2(config)
+    def make_stage_2(
+        config,
+        env_spec: EnvSpec, teams: list[TeamSpec],
+        partners: list[list[SelfPlayAgent]],
+        cls_team_actors: list[Type[SelfPlayAgent]],
+        numpy_seed: int
+        ):
+        return _make_stage_2(config, env_spec, teams, partners, cls_team_actors, numpy_seed)
