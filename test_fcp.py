@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime
+import os
 from typing import Any, NamedTuple, Sequence, Type
 
 import distrax
@@ -12,10 +13,13 @@ import numpy as np
 from flax import serialization
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from flax.training import checkpoints
 from jaxmarl.environments import SimpleReferenceMPE
 from jaxmarl.environments.overcooked import overcooked_layouts
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 import optax
+import orbax.checkpoint
+from flax.training import orbax_utils
 
 from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec, _make_stage_2, get_rollout
 
@@ -47,7 +51,7 @@ class SimpleNetwork(nn.Module):
     
 
 
-def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env):
+def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env, checkpoint_dir, checkpoint_prefix):
     network = SimpleNetwork(env.action_space().n)
     init_x = jnp.zeros(env.observation_space().shape)
     init_x = init_x.flatten()
@@ -62,6 +66,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         params=network_params,
         tx=tx,
     )
+
+    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
 
     def get_action(rng, obsv, flattened_obsv, agent_state):
         pi, value = network.apply(agent_state["train_state"].params, flattened_obsv)
@@ -157,39 +163,47 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 
         return agent_state, total_loss
     
+    def save(agent_state, step):
+        # I guess it's best to pickle and unpickle since the other things don't really seem to work
+        # Only save network parameters to save disk space
+        target = agent_state["train_state"].params
+        save_args = orbax_utils.save_args_from_target(target)
+        orbax_checkpointer.save(
+            os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}"),
+            target,
+            save_args=save_args
+            )
+        return None
+
+    def load(agent_state, step):
+        target = agent_state["train_state"].params
+        restore_args = orbax_utils.restore_args_from_target(target)
+        restored_params = orbax_checkpointer.restore(
+            os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}"),
+            restore_args=restore_args
+        )
+
+        new_agent_state = {}
+        new_agent_state["eval"] = True
+        new_agent_state["train_state"] = TrainState.create(
+            apply_fn=network.apply,
+            params=restored_params,
+            tx=tx
+        )
+        return agent_state
+    
     return SelfPlayAgent(
         get_action,
-        update
+        update,
+        save,
+        load,
     ), init_agent_state
     
 
-# def make_simple_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env):
-#     sample_agent_id = team_spec.agent_uids[0]
-#     available_actions = env.action_space(sample_agent_id)
-#     init_agent_state = {}
-
-#     def get_action(rng, obsv, flattened_obsv, agent_state):
-#         count = obsv.shape[0]
-#         actions = jnp.empty(shape=obsv.shape[0], dtype=jnp.int32)
-#         for i in range(count):
-#             rng, key = jax.random.split(rng)
-#             actions = actions.at[i].set(available_actions.sample(key))
-#         rng, key = jax.random.split(rng)
-#         return agent_state, actions, (jax.random.normal(key, (count, )), )
-    
-#     def update(rng, trajectories, agent_state):
-#         return agent_state, None
-    
-#     return SelfPlayAgent(
-#         get_action,
-#         update
-#     ), init_agent_state
-    
-
 config = {
-    "ENV_STEPS": 1e6,
-    "NUM_UPDATES": 100,
-    "NUM_EPISODES": 6,
+    "ENV_STEPS": 10,
+    "NUM_UPDATES": 2,
+    "NUM_EPISODES": 3,
     # "ANNEAL_LR": True,
     "MAX_GRAD_NORM": 0.5,
     "LR": 2.5e-4,
@@ -209,25 +223,23 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 5, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 3, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1(config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     episode_metrics, partners, last_episode_runner_state = stage_1_jit(_rng)
 
-    env_obsv_state, partner_states, rng = last_episode_runner_state
+    # env_obsv_state, partner_states, rng = last_episode_runner_state
+    # single_partner_states = []
+    # for team_partners in partner_states:
+    #     single_partner_states.append([team_partners[0], ])
+    # env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
+    # teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
+    # state_seq = get_rollout(config, single_partner_states, env_spec, teams, max_steps=30)
 
-    single_partner_states = []
-    for team_partners in partner_states:
-        single_partner_states.append([team_partners[0], ])
-
-    env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
-    state_seq = get_rollout(config, single_partner_states, env_spec, teams, max_steps=30)
-
-    return state_seq
+    return None
 
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
@@ -237,11 +249,11 @@ def main():
 
 if __name__ == "__main__":
     start_time = datetime.now()
-    state_seq = jax.jit(main)()
+    state_seq = main()
     stop_time = datetime.now()
     print(f"Elapsed {stop_time-start_time}")
 
-    env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
+    # env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
 
-    viz =  OvercookedVisualizer()
-    viz.animate(state_seq, env.agent_view_size, filename='animation.gif')
+    # viz =  OvercookedVisualizer()
+    # viz.animate(state_seq, env.agent_view_size, filename='animation.gif')

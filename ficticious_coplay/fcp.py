@@ -1,17 +1,23 @@
 from collections import OrderedDict
 from copy import deepcopy
+import os
+import pickle
 from typing import Any, Callable, NamedTuple, Sequence, Type
 
 import distrax
 import flax.linen as nn
 import jax
+import jax.experimental
 import jax.numpy as jnp
 import jaxmarl
 import numpy as np
 from flax import serialization
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+from flax.training import checkpoints
 from jaxmarl.environments import SimpleReferenceMPE
+import orbax.checkpoint as ocp
+from flax.training import orbax_utils
 
 
 # TODO
@@ -21,7 +27,7 @@ class EnvSpec(NamedTuple):
     env_kwargs: Any
 
 class TeamSpec(NamedTuple):
-    agent_class: Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any], 'SelfPlayAgent']
+    agent_class: Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']
     agent_count: int
     agent_uids: list['AgentUID']
 
@@ -54,6 +60,8 @@ agents are randomly assigned to environments
 class SelfPlayAgent(NamedTuple):
     get_action: Callable[[Any, jnp.ndarray, jnp.ndarray, Any], tuple[Any, jnp.ndarray, Any]] # rng, obs_v, flattened_obs_v, agent_state -> update_agent_state, actions_v, aux_data
     update: Callable[[Any, Any, Any], tuple[Any, Any]] # config, rng, trajectories -> updated_agent_state, metrics
+    save: Callable[[Any, int], None] # agent_state, step -> None
+    load: Callable[[Any, int], Any] # agent_state, step -> new_agent_state
     
 
 class Transition(NamedTuple):
@@ -225,6 +233,7 @@ def _make_update_step(
             metrics.append(team_metrics)
             updated_partner_states.append(team_updated_partner_states)
 
+
         runner_state = env_obsv_state, updated_partner_states, rng
         return runner_state, metrics
     return _update_step
@@ -308,19 +317,30 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
         rng_array = jax.random.split(rng, env_spec.count)
         env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
 
+        checkpoint_dir = os.path.join(".", "tmp", "test")
+
         # Create all parallelised partner agents for each team
         partners = []
         partner_states = []
         for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
             team_partners = []
             team_partner_states = []
-            for _ in range(partner_count):
+            for p_ix in range(partner_count):
                 rng, _rng = jax.random.split(rng)
-                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env)
+                checkpoint_prefix = f"{team_ix}-{p_ix}_"
+                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env, checkpoint_dir, checkpoint_prefix)
                 team_partners.append(partner)
                 team_partner_states.append(partner_state)
             partners.append(team_partners)
             partner_states.append(team_partner_states)
+
+
+        # After update, save agent weights as checkpoints
+        # Checkpointing doesn't work
+        target = partner_states[0][0]['train_state'].params
+        orbax_checkpointer = ocp.StandardCheckpointer()
+        save_args = orbax_utils.save_args_from_target(target)
+        orbax_checkpointer.save('tmp/classifier.ckpt', target, save_args=save_args)
 
 
         # We need to randomly sample partner agents to assign them to environment instances
