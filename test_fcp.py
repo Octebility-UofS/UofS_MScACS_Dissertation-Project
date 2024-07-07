@@ -14,9 +14,10 @@ from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
 from jaxmarl.environments import SimpleReferenceMPE
 from jaxmarl.environments.overcooked import overcooked_layouts
+from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 import optax
 
-from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec, _make_stage_2
+from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec, _make_stage_2, get_rollout
 
 
 class SimpleNetwork(nn.Module):
@@ -186,7 +187,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     
 
 config = {
-    "ENV_STEPS": 1e3/100,
+    "ENV_STEPS": 1e6,
     "NUM_UPDATES": 100,
     "NUM_EPISODES": 6,
     # "ANNEAL_LR": True,
@@ -208,15 +209,25 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 20, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 3, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1(config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
-    episode_metrics, partners = stage_1_jit(_rng)
+    episode_metrics, partners, last_episode_runner_state = stage_1_jit(_rng)
 
-    return episode_metrics
+    env_obsv_state, partner_states, rng = last_episode_runner_state
+
+    single_partner_states = []
+    for team_partners in partner_states:
+        single_partner_states.append([team_partners[0], ])
+
+    env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
+    state_seq = get_rollout(config, single_partner_states, env_spec, teams, max_steps=30)
+
+    return state_seq
 
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
@@ -226,7 +237,11 @@ def main():
 
 if __name__ == "__main__":
     start_time = datetime.now()
-    res = jax.jit(main)()
+    state_seq = jax.jit(main)()
     stop_time = datetime.now()
     print(f"Elapsed {stop_time-start_time}")
-    print(res)
+
+    env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
+
+    viz =  OvercookedVisualizer()
+    viz.animate(state_seq, env.agent_view_size, filename='animation.gif')

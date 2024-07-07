@@ -190,7 +190,7 @@ def _make_envs_step(
 
         
         runner_state = updated_env_obsv_state, updated_partner_states, rng
-        return runner_state, agent_transitions
+        return runner_state, (agent_transitions, env_state)
 
 
     return _envs_step
@@ -203,7 +203,7 @@ def _make_update_step(
     ):
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], _):
         # Collect Trajectories
-        runner_state, trajectories = jax.lax.scan(
+        runner_state, (trajectories, _) = jax.lax.scan(
             _make_envs_step(map_agent_uid_to_partner_instance, env_spec, env, partners),
             runner_state, None,
             length=config["ENV_STEPS"]
@@ -248,6 +248,52 @@ def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partner
         return runner_episode, metrics
     
     return _episode
+
+
+def get_rollout(config, partner_states, env_spec: EnvSpec, teams: list[TeamSpec], max_steps=200):
+    env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
+    max_steps = min(max_steps, env.max_steps)
+
+    np_rng = np.random.default_rng(0)
+    rng = jax.random.PRNGKey(0)
+
+    partners = []
+    for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
+        team_partners = []
+        for _ in range(partner_count):
+            rng, _rng = jax.random.split(rng)
+            partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env)
+            team_partners.append(partner)
+        partners.append(team_partners)
+
+    map_agent_uid_to_partner_instance = dict()
+    for (team_ix, team_spec) in enumerate(teams):
+        for agent_id in team_spec.agent_uids:
+            partner_count = team_spec.agent_count
+            env_instance_count = env_spec.count
+            sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
+            masks = []
+            for i in range(partner_count):
+                masks.append(np.isclose(sampled_partners, i))
+            map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+
+    rng, _rng = jax.random.split(rng)
+    rng_reset = jax.random.split(_rng, 1)
+    obs, state = jax.vmap(env.reset, in_axes=(0, ))(rng_reset)
+
+    state_seq = [state, ]
+    runner_state = (obs, state), partner_states, rng
+    _, (_, env_states) = jax.lax.scan(
+            _make_envs_step(map_agent_uid_to_partner_instance, env_spec, env, partners),
+            runner_state, None,
+            length=max_steps
+        )
+    # Unbatchify the states since they're currently of shape [1, :]
+    state_seq += [ jax.tree_map(lambda x: x[i], env_states) for i in range(max_steps) ]
+    unbatched_state_seq = [ jax.tree_map(lambda x: x[0], state) for state in state_seq ]
+
+    return unbatched_state_seq
+
 
 
 
@@ -299,7 +345,7 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
             length=config["NUM_EPISODES"]
         )
 
-        return episode_metrics, partners
+        return episode_metrics, partners, last_episode_runner_state
 
     return _stage_1
 
