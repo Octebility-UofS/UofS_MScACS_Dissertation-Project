@@ -219,23 +219,21 @@ def _make_update_step(
 
 
         # Update each agent given their trajectories
-        metrics = []
+        metrics = {}
         env_obsv_state, partner_states, rng = runner_state
         updated_partner_states = []
         for team_ix, team_partners in enumerate(partners):
-            team_metrics = []
+            metrics[team_ix] = {}
             team_updated_partner_states = []
             for p_ix, partner in enumerate(team_partners):
                 rng, _rng = jax.random.split(rng)
                 updated_partner_state, update_metrics = partner.update(_rng, trajectories[team_ix][p_ix], partner_states[team_ix][p_ix])
-                team_metrics.append(update_metrics)
+                metrics[team_ix][p_ix] = update_metrics
                 team_updated_partner_states.append(updated_partner_state)
-            metrics.append(team_metrics)
             updated_partner_states.append(team_updated_partner_states)
 
-
         runner_state = env_obsv_state, updated_partner_states, rng
-        return runner_state, metrics
+        return runner_state, (metrics, updated_partner_states)
     return _update_step
 
 
@@ -246,7 +244,7 @@ def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partner
         rng, _rng = jax.random.split(rng)
 
         runner_state = env_obsv_state, partner_states, _rng
-        last_runner_state, metrics = jax.lax.scan(
+        last_runner_state, (metrics, checkpointed_partner_states) = jax.lax.scan(
                 _make_update_step(config, map_agent_uid_to_partner_instance, env_spec, teams, env, partners),
                 runner_state, None,
                 length=config["NUM_UPDATES"]
@@ -254,7 +252,7 @@ def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partner
         env_obsv_state, partner_states, rng = last_runner_state
 
         runner_episode = env_obsv_state, partner_states, rng
-        return runner_episode, metrics
+        return runner_episode, (metrics, checkpointed_partner_states)
     
     return _episode
 
@@ -337,10 +335,10 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
 
         # After update, save agent weights as checkpoints
         # Checkpointing doesn't work
-        target = partner_states[0][0]['train_state'].params
-        orbax_checkpointer = ocp.StandardCheckpointer()
-        save_args = orbax_utils.save_args_from_target(target)
-        orbax_checkpointer.save('tmp/classifier.ckpt', target, save_args=save_args)
+        # target = partner_states[0][0]['train_state'].params
+        # orbax_checkpointer = ocp.StandardCheckpointer()
+        # save_args = orbax_utils.save_args_from_target(target)
+        # orbax_checkpointer.save('tmp/classifier.ckpt', target, save_args=save_args)
 
 
         # We need to randomly sample partner agents to assign them to environment instances
@@ -359,13 +357,15 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
 
         # Scan over episodes
         episode_runner_state = env_obsv_state, partner_states, rng
-        last_episode_runner_state, episode_metrics = jax.lax.scan(
+        last_episode_runner_state, (episode_metrics, checkpointed_partner_states) = jax.lax.scan(
             _make_episode(config, env_spec, teams, env, partners, map_agent_uid_to_partner_instance),
             episode_runner_state, None,
             length=config["NUM_EPISODES"]
         )
 
-        return episode_metrics, partners, last_episode_runner_state
+        unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), episode_metrics)
+
+        return unravelled_episode_metrics, partners, last_episode_runner_state
 
     return _stage_1
 

@@ -20,6 +20,7 @@ from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 import optax
 import orbax.checkpoint
 from flax.training import orbax_utils
+import matplotlib.pyplot as plt
 
 from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec, _make_stage_2, get_rollout
 
@@ -201,9 +202,9 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     
 
 config = {
-    "ENV_STEPS": 10,
-    "NUM_UPDATES": 2,
-    "NUM_EPISODES": 3,
+    "ENV_STEPS": 1e4,
+    "NUM_UPDATES": 100,
+    "NUM_EPISODES": 5,
     # "ANNEAL_LR": True,
     "MAX_GRAD_NORM": 0.5,
     "LR": 2.5e-4,
@@ -223,8 +224,8 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 5, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 3, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 50, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 4, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1(config, env_spec, teams, numpy_seed)
@@ -239,7 +240,7 @@ def main():
     # teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
     # state_seq = get_rollout(config, single_partner_states, env_spec, teams, max_steps=30)
 
-    return None
+    return episode_metrics
 
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
@@ -249,9 +250,17 @@ def main():
 
 if __name__ == "__main__":
     start_time = datetime.now()
-    state_seq = main()
+    metrics = main()
     stop_time = datetime.now()
     print(f"Elapsed {stop_time-start_time}")
+
+    total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
+    for team_ix, team_metrics in metrics.items():
+        for p_ix, partner_metrics in team_metrics.items():
+            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
+    plt.legend()
+    os.makedirs("./tmp/", exist_ok=True)
+    plt.savefig("./tmp/loss_per_partner.png")
 
     # env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
 
