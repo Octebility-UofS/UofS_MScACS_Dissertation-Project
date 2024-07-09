@@ -250,7 +250,7 @@ def main():
 
 if __name__ == "__main__":
     start_time = datetime.now()
-    metrics = main()
+    metrics = jax.jit(main, device=jax.devices('gpu')[0])()
     stop_time = datetime.now()
     print(f"Elapsed {stop_time-start_time}")
 
