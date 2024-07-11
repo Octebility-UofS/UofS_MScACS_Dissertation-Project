@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --partition=gpu --qos=gpu --gres=gpu:a100:1
-#SBATCH --mem=8G
+#SBATCH --mem=200G
 #SBATCH --output=out/log/%j.out
 #SBATCH --mail-type=ALL --mail-user=mlobillich1@sheffield.ac.uk
 
