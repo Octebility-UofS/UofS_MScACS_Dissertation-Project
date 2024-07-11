@@ -4,17 +4,12 @@ import os
 import pickle
 from typing import Any, Callable, NamedTuple, Sequence, Type
 
-import distrax
 import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp
 import jaxmarl
 import numpy as np
-from flax import serialization
-from flax.linen.initializers import constant, orthogonal
-from flax.training.train_state import TrainState
-from flax.training import checkpoints
 from jaxmarl.environments import SimpleReferenceMPE
 import orbax.checkpoint as ocp
 from flax.training import orbax_utils
@@ -209,7 +204,7 @@ def _make_update_step(
     env_spec: EnvSpec, teams: list[TeamSpec], env,
     partners: list[list[SelfPlayAgent]]
     ):
-    def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], _):
+    def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):
         # Collect Trajectories
         runner_state, (trajectories, _) = jax.lax.scan(
             _make_envs_step(map_agent_uid_to_partner_instance, env_spec, env, partners),
@@ -232,32 +227,40 @@ def _make_update_step(
                 team_updated_partner_states.append(updated_partner_state)
             updated_partner_states.append(team_updated_partner_states)
 
+
+        # After update, save agent weights as checkpoints
+        for team_ix, team_partners in enumerate(partners):
+            for p_ix, partner in enumerate(team_partners):
+                agent_state = updated_partner_states[0][0]
+                jax.experimental.io_callback(partner.save, agent_state, agent_state, save_counter)
+
         runner_state = env_obsv_state, updated_partner_states, rng
-        return runner_state, (metrics, updated_partner_states)
+        return runner_state, (metrics, )
     return _update_step
 
 
 def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partners, map_agent_uid_to_partner_instance):
-    def _episode(runner_episode, _):
+    def _episode(runner_episode, counter):
         env_obsv_state, partner_states, rng = runner_episode
 
         rng, _rng = jax.random.split(rng)
 
         runner_state = env_obsv_state, partner_states, _rng
-        last_runner_state, (metrics, checkpointed_partner_states) = jax.lax.scan(
+        last_runner_state, (metrics, ) = jax.lax.scan(
                 _make_update_step(config, map_agent_uid_to_partner_instance, env_spec, teams, env, partners),
-                runner_state, None,
+                runner_state,
+                counter*config["NUM_UPDATES"] + jnp.arange(0, config["NUM_UPDATES"]), # Keep track of individual update step counter
                 length=config["NUM_UPDATES"]
             )
         env_obsv_state, partner_states, rng = last_runner_state
 
         runner_episode = env_obsv_state, partner_states, rng
-        return runner_episode, (metrics, checkpointed_partner_states)
+        return runner_episode, (metrics, )
     
     return _episode
 
 
-def get_rollout(config, partner_states, env_spec: EnvSpec, teams: list[TeamSpec], max_steps=200):
+def get_rollout(config, checkpoint_load_steps, env_spec: EnvSpec, teams: list[TeamSpec], max_steps=200):
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
     max_steps = min(max_steps, env.max_steps)
 
@@ -265,13 +268,18 @@ def get_rollout(config, partner_states, env_spec: EnvSpec, teams: list[TeamSpec]
     rng = jax.random.PRNGKey(0)
 
     partners = []
+    partner_states = []
     for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
         team_partners = []
-        for _ in range(partner_count):
+        team_partner_states = []
+        for p_ix in range(partner_count):
             rng, _rng = jax.random.split(rng)
-            partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env)
+            checkpoint_prefix = f"{team_ix}-{p_ix}_"
+            partner, init_partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env, config["CHECKPOINT_DIR"], checkpoint_prefix)
+            team_partner_states.append(partner.load(init_partner_state, checkpoint_load_steps[team_ix]))
             team_partners.append(partner)
         partners.append(team_partners)
+        partner_states.append(team_partner_states)
 
     map_agent_uid_to_partner_instance = dict()
     for (team_ix, team_spec) in enumerate(teams):
@@ -315,8 +323,6 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
         rng_array = jax.random.split(rng, env_spec.count)
         env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
 
-        checkpoint_dir = os.path.join(".", "tmp", "test")
-
         # Create all parallelised partner agents for each team
         partners = []
         partner_states = []
@@ -326,19 +332,11 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
             for p_ix in range(partner_count):
                 rng, _rng = jax.random.split(rng)
                 checkpoint_prefix = f"{team_ix}-{p_ix}_"
-                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env, checkpoint_dir, checkpoint_prefix)
+                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env, config["CHECKPOINT_DIR"], checkpoint_prefix)
                 team_partners.append(partner)
                 team_partner_states.append(partner_state)
             partners.append(team_partners)
             partner_states.append(team_partner_states)
-
-
-        # After update, save agent weights as checkpoints
-        # Checkpointing doesn't work
-        # target = partner_states[0][0]['train_state'].params
-        # orbax_checkpointer = ocp.StandardCheckpointer()
-        # save_args = orbax_utils.save_args_from_target(target)
-        # orbax_checkpointer.save('tmp/classifier.ckpt', target, save_args=save_args)
 
 
         # We need to randomly sample partner agents to assign them to environment instances
@@ -357,15 +355,16 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
 
         # Scan over episodes
         episode_runner_state = env_obsv_state, partner_states, rng
-        last_episode_runner_state, (episode_metrics, checkpointed_partner_states) = jax.lax.scan(
+        last_episode_runner_state, (episode_metrics, ) = jax.lax.scan(
             _make_episode(config, env_spec, teams, env, partners, map_agent_uid_to_partner_instance),
-            episode_runner_state, None,
+            episode_runner_state,
+            jnp.arange(0, config["NUM_EPISODES"]), # Used to keep track of saved network parameters
             length=config["NUM_EPISODES"]
         )
 
         unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), episode_metrics)
 
-        return unravelled_episode_metrics, partners, last_episode_runner_state
+        return unravelled_episode_metrics, last_episode_runner_state
 
     return _stage_1
 
@@ -460,15 +459,16 @@ def _make_stage_2(
 
 class FCP:
     @staticmethod
-    def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
-        return _make_stage_1(config, env_spec, teams, numpy_seed)
+    def make_stage_1(jit_device, config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
+        return jax.jit(_make_stage_1(config, env_spec, teams, numpy_seed), device=jit_device)
 
     @staticmethod
     def make_stage_2(
+        jit_device,
         config,
         env_spec: EnvSpec, teams: list[TeamSpec],
         partners: list[list[SelfPlayAgent]],
         cls_team_actors: list[Type[SelfPlayAgent]],
         numpy_seed: int
         ):
-        return _make_stage_2(config, env_spec, teams, partners, cls_team_actors, numpy_seed)
+        return jax.jit(_make_stage_2(config, env_spec, teams, partners, cls_team_actors, numpy_seed), device=jit_device)

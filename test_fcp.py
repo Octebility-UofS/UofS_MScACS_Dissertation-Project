@@ -2,6 +2,7 @@ from collections import OrderedDict
 from copy import deepcopy
 from datetime import datetime
 import os
+import pickle
 from typing import Any, NamedTuple, Sequence, Type
 
 import distrax
@@ -10,11 +11,8 @@ import jax
 import jax.numpy as jnp
 import jaxmarl
 import numpy as np
-from flax import serialization
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
-from flax.training import checkpoints
-from jaxmarl.environments import SimpleReferenceMPE
 from jaxmarl.environments.overcooked import overcooked_layouts
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 import optax
@@ -67,8 +65,6 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         params=network_params,
         tx=tx,
     )
-
-    orbax_checkpointer = orbax.checkpoint.PyTreeCheckpointer()
 
     def get_action(rng, obsv, flattened_obsv, agent_state):
         pi, value = network.apply(agent_state["train_state"].params, flattened_obsv)
@@ -168,21 +164,15 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         # I guess it's best to pickle and unpickle since the other things don't really seem to work
         # Only save network parameters to save disk space
         target = agent_state["train_state"].params
-        save_args = orbax_utils.save_args_from_target(target)
-        orbax_checkpointer.save(
-            os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}"),
-            target,
-            save_args=save_args
-            )
-        return None
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}.param.ckpt"), 'wb') as f:
+            pickle.dump(target, f)
+        return agent_state
 
     def load(agent_state, step):
-        target = agent_state["train_state"].params
-        restore_args = orbax_utils.restore_args_from_target(target)
-        restored_params = orbax_checkpointer.restore(
-            os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}"),
-            restore_args=restore_args
-        )
+        restored_params = None
+        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}.param.ckpt"), 'rb') as f:
+            restored_params = pickle.load(f)
 
         new_agent_state = {}
         new_agent_state["eval"] = True
@@ -191,7 +181,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             params=restored_params,
             tx=tx
         )
-        return agent_state
+        return new_agent_state
     
     return SelfPlayAgent(
         get_action,
@@ -202,7 +192,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     
 
 config = {
-    "ENV_STEPS": 1e4,
+    "CHECKPOINT_DIR": os.path.join(".", "tmp", "checkpoints"),
+    "ENV_STEPS": 1e5,
     "NUM_UPDATES": 100,
     "NUM_EPISODES": 5,
     # "ANNEAL_LR": True,
@@ -227,20 +218,35 @@ def main():
     env_spec = EnvSpec("overcooked", 50, {"layout" : overcooked_layouts["cramped_room"]})
     teams = [ TeamSpec(make_ppo_agent, 4, ['agent_0', 'agent_1']), ]
 
+    jit_device = jax.devices('cpu')[0]
     rng, _rng = jax.random.split(rng)
-    stage_1_jit = FCP.make_stage_1(config, env_spec, teams, numpy_seed)
+    stage_1_jit = FCP.make_stage_1(jit_device, config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
-    episode_metrics, partners, last_episode_runner_state = stage_1_jit(_rng)
+    start_time = datetime.now()
+    episode_metrics, last_episode_runner_state = stage_1_jit(_rng)
+    stop_time = datetime.now()
+    print(f"Elapsed {stop_time-start_time}")
 
-    # env_obsv_state, partner_states, rng = last_episode_runner_state
-    # single_partner_states = []
-    # for team_partners in partner_states:
-    #     single_partner_states.append([team_partners[0], ])
-    # env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
-    # teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
-    # state_seq = get_rollout(config, single_partner_states, env_spec, teams, max_steps=30)
 
-    return episode_metrics
+    total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
+    for team_ix, team_metrics in episode_metrics.items():
+        for p_ix, partner_metrics in team_metrics.items():
+            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
+    plt.legend()
+    os.makedirs("./tmp/", exist_ok=True)
+    plt.savefig("./tmp/loss_per_partner.png")
+
+
+
+    env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
+    checkpoint_load_steps = [(config["NUM_EPISODES"]*config["NUM_UPDATES"])-1, ]
+    state_seq = get_rollout(config, checkpoint_load_steps, env_spec, teams, max_steps=300)
+    env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
+    viz =  OvercookedVisualizer()
+    viz.animate(state_seq, env.agent_view_size, filename='tmp/animation.gif')
+
+    return episode_metrics, last_episode_runner_state
 
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
@@ -249,20 +255,4 @@ def main():
 
 
 if __name__ == "__main__":
-    start_time = datetime.now()
-    metrics = jax.jit(main, device=jax.devices('gpu')[0])()
-    stop_time = datetime.now()
-    print(f"Elapsed {stop_time-start_time}")
-
-    total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
-    for team_ix, team_metrics in metrics.items():
-        for p_ix, partner_metrics in team_metrics.items():
-            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
-    plt.legend()
-    os.makedirs("./tmp/", exist_ok=True)
-    plt.savefig("./tmp/loss_per_partner.png")
-
-    # env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
-
-    # viz =  OvercookedVisualizer()
-    # viz.animate(state_seq, env.agent_view_size, filename='animation.gif')
+    main()
