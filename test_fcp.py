@@ -266,21 +266,21 @@ def main():
     env_spec = EnvSpec("overcooked", 100, {"layout" : overcooked_layouts["cramped_room"]})
     teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
 
-    gpu_available = False
-    try:
-        jax.devices('gpu')
-        gpu_available = True
-    except RuntimeError:
-        gpu_available = False
+    # gpu_available = False
+    # try:
+    #     jax.devices('gpu')
+    #     gpu_available = True
+    # except RuntimeError:
+    #     gpu_available = False
 
-    jit_device = None
-    if gpu_available:
-        jit_device = jax.devices('gpu')[0]
-    else:
-        jit_device = jax.devices('cpu')[0]
+    # jit_device = None
+    # if gpu_available:
+    #     jit_device = jax.devices('gpu')[0]
+    # else:
+    #     jit_device = jax.devices('cpu')[0]
 
     rng, _rng = jax.random.split(rng)
-    stage_1_jit = FCP.make_stage_1(jit_device, config, env_spec, teams, numpy_seed)
+    stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     start_time = datetime.now()
     episode_metrics, last_episode_runner_state = stage_1_jit(_rng)
