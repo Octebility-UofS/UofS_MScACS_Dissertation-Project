@@ -239,7 +239,7 @@ def main():
 
     config = {
         "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
-        "ENV_STEPS": 1e7,
+        "ENV_STEPS": 1e6,
         "NUM_UPDATES": 2,
         "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,
