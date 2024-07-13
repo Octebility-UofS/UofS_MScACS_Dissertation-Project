@@ -3,6 +3,7 @@ from copy import deepcopy
 from datetime import datetime
 import os
 import pickle
+import sys
 from typing import Any, NamedTuple, Sequence, Type
 
 import distrax
@@ -191,25 +192,39 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     ), init_agent_state
     
 
-config = {
-    "CHECKPOINT_DIR": os.path.join(".", "tmp", "checkpoints"),
-    "ENV_STEPS": 1e5,
-    "NUM_UPDATES": 100,
-    "NUM_EPISODES": 5,
-    # "ANNEAL_LR": True,
-    "MAX_GRAD_NORM": 0.5,
-    "LR": 2.5e-4,
-    "GAMMA": 0.99,
-    "GAE_LAMBDA": 0.95,
-    "CLIP_EPS": 0.2,
-    "ENT_COEF": 0.01,
-    "VF_COEF": 0.5,
-    # "NUM_ENVS": 3, # 200
-    # "NUM_AGENTS": 3, # 32
-    # "NUM_STEPS": 25
-}
+
+
+
+
 
 def main():
+    job_id = "0"
+    if len(sys.argv) > 1:
+        job_id = sys.argv[1]
+    os.makedirs(os.path.join(".", "out", job_id), exist_ok=True)
+
+
+
+    config = {
+        "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
+        "ENV_STEPS": 1e2,
+        "NUM_UPDATES": 10,
+        "NUM_EPISODES": 2,
+        # "ANNEAL_LR": True,
+        "MAX_GRAD_NORM": 0.5,
+        "LR": 2.5e-4,
+        "GAMMA": 0.99,
+        "GAE_LAMBDA": 0.95,
+        "CLIP_EPS": 0.2,
+        "ENT_COEF": 0.01,
+        "VF_COEF": 0.5,
+        # "NUM_ENVS": 3, # 200
+        # "NUM_AGENTS": 3, # 32
+        # "NUM_STEPS": 25
+    }
+
+
+
     rng = jax.random.PRNGKey(0)
     numpy_seed = 0
 
@@ -233,8 +248,7 @@ def main():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
     plt.legend()
-    os.makedirs("./tmp/", exist_ok=True)
-    plt.savefig("./tmp/loss_per_partner.png")
+    plt.savefig(f"./out/{job_id}/loss_per_partner.png")
 
 
 
@@ -244,7 +258,7 @@ def main():
     state_seq = get_rollout(config, checkpoint_load_steps, env_spec, teams, max_steps=300)
     env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
     viz =  OvercookedVisualizer()
-    viz.animate(state_seq, env.agent_view_size, filename='tmp/animation.gif')
+    viz.animate(state_seq, env.agent_view_size, filename=f'./out/{job_id}/animation.gif')
 
     return episode_metrics, last_episode_runner_state
 
