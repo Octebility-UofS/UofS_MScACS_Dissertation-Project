@@ -60,7 +60,6 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]), optax.adam(config["LR"], eps=1e-5))
 
     init_agent_state = {}
-    init_agent_state["eval"] = False
     init_agent_state["train_state"] = TrainState.create(
         apply_fn=network.apply,
         params=network_params,
@@ -129,7 +128,6 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 
         updated_train_state = agent_state["train_state"].apply_gradients(grads=gradients)
         update_agent_state = {
-            "eval": agent_state["eval"],
             "train_state": updated_train_state
         }
 
@@ -208,7 +206,6 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             restored_params = pickle.load(f)
 
         new_agent_state = {}
-        new_agent_state["eval"] = True
         new_agent_state["train_state"] = TrainState.create(
             apply_fn=network.apply,
             params=restored_params,
@@ -239,9 +236,9 @@ def main():
 
     config = {
         "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
-        "ENV_STEPS": 1e6,
+        "ENV_STEPS": 10,
         "NUM_UPDATES": 2,
-        "NUM_MINIBATCHES": 10,
+        "NUM_MINIBATCHES": 1,
         "NUM_EPISODES": 1,
         # "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
@@ -263,8 +260,8 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 100, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 20, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 3, ['agent_0', 'agent_1']), ]
 
     # gpu_available = False
     # try:
