@@ -459,16 +459,15 @@ def _make_stage_2(
 
 class FCP:
     @staticmethod
-    def make_stage_1(jit_device, config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
-        return jax.jit(_make_stage_1(config, env_spec, teams, numpy_seed), device=jit_device)
+    def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
+        return jax.jit(_make_stage_1(config, env_spec, teams, numpy_seed))
 
     @staticmethod
     def make_stage_2(
-        jit_device,
         config,
         env_spec: EnvSpec, teams: list[TeamSpec],
         partners: list[list[SelfPlayAgent]],
         cls_team_actors: list[Type[SelfPlayAgent]],
         numpy_seed: int
         ):
-        return jax.jit(_make_stage_2(config, env_spec, teams, partners, cls_team_actors, numpy_seed), device=jit_device)
+        return jax.jit(_make_stage_2(config, env_spec, teams, partners, cls_team_actors, numpy_seed))
