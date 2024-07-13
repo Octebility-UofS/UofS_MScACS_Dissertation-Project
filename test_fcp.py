@@ -263,7 +263,7 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
+    env_spec = EnvSpec("overcooked", 100, {"layout" : overcooked_layouts["cramped_room"]})
     teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
 
     gpu_available = False
