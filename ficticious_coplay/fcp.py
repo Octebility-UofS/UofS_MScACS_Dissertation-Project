@@ -362,7 +362,7 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
             length=config["NUM_EPISODES"]
         )
 
-        unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), episode_metrics)
+        unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.mean(jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), axis=-1), episode_metrics)
 
         return unravelled_episode_metrics, last_episode_runner_state
 

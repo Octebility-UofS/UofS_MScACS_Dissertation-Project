@@ -81,7 +81,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         # net_train_state_params = agent_state["train_state"].params
         # gae = Advantages
         # RERUN NETWORK
-        flattened_obs = traj_batch.obs.reshape((traj_batch.obs.shape[0], traj_batch.obs.shape[1], -1))
+        # Since we are working in flattned minibatches batches, we only need to keep the first dimension
+        flattened_obs = traj_batch.obs.reshape((traj_batch.obs.shape[0], -1))
         pi, value = network.apply(net_train_state_params, flattened_obs)
         log_prob = pi.log_prob(traj_batch.action)
 
@@ -119,6 +120,20 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             - config["ENT_COEF"] * entropy
         )
         return total_loss, (value_loss, loss_actor, entropy)
+    
+    def _update_minibatch(agent_state, batch_data):
+        trajectories, advantages, targets = batch_data
+
+        grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
+        total_loss, gradients = grad_fn(agent_state["train_state"].params, trajectories, advantages, targets)
+
+        updated_train_state = agent_state["train_state"].apply_gradients(grads=gradients)
+        update_agent_state = {
+            "eval": agent_state["eval"],
+            "train_state": updated_train_state
+        }
+
+        return update_agent_state, total_loss
 
 
     def update(rng, trajectories, agent_state):
@@ -154,12 +169,29 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             return advantages, advantages + traj_batch.processed_observation[1] # advantages + values
 
         advantages, targets = _calculate_gae(trajectories, last_val)
+        assert ( (config["ENV_STEPS"] % config["NUM_MINIBATCHES"]) == 0 ), "Number of Minibatches must be divisible by number of environment steps"
+        batch_size = advantages.shape[0] * advantages.shape[1]
+        rng, _rng = jax.random.split(rng)
+        permutation = jax.random.permutation(_rng, batch_size)
+        batch = (trajectories, advantages, targets)
+        batch_reshaped = jax.tree_util.tree_map(
+            lambda x: x.reshape((batch_size,) + x.shape[2:]), batch
+        )
+        batch_shuffled = jax.tree_util.tree_map(
+            lambda x: jnp.take(x, permutation, axis=0), batch_reshaped
+        )
+        minibatches = jax.tree_util.tree_map(
+            lambda x: jnp.reshape(
+                x, [config["NUM_MINIBATCHES"], -1] + list(x.shape[1:])
+            ),
+            batch_shuffled,
+        )
+        
+        updated_agent_state, total_loss = jax.lax.scan(
+            _update_minibatch, agent_state, minibatches
+        )
 
-        grad_fn = jax.value_and_grad(_loss_fn, has_aux=True)
-        total_loss, gradients = grad_fn(agent_state["train_state"].params, trajectories, advantages, targets)
-        agent_state["train_state"] = agent_state["train_state"].apply_gradients(grads=gradients)
-
-        return agent_state, total_loss
+        return updated_agent_state, total_loss
     
     def save(agent_state, step):
         # I guess it's best to pickle and unpickle since the other things don't really seem to work
@@ -207,9 +239,10 @@ def main():
 
     config = {
         "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
-        "ENV_STEPS": 1e2,
-        "NUM_UPDATES": 10,
-        "NUM_EPISODES": 2,
+        "ENV_STEPS": 1e7,
+        "NUM_UPDATES": 2,
+        "NUM_MINIBATCHES": 10,
+        "NUM_EPISODES": 1,
         # "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
         "LR": 2.5e-4,
@@ -230,10 +263,22 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 50, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 4, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
 
-    jit_device = jax.devices('cpu')[0]
+    gpu_available = False
+    try:
+        jax.devices('gpu')
+        gpu_available = True
+    except RuntimeError:
+        gpu_available = False
+
+    jit_device = None
+    if gpu_available:
+        jit_device = jax.devices('gpu')[0]
+    else:
+        jit_device = jax.devices('cpu')[0]
+
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1(jit_device, config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
