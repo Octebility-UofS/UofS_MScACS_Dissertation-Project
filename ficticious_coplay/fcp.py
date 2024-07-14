@@ -260,7 +260,7 @@ def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partner
     return _episode
 
 
-def get_rollout(config, checkpoint_load_steps, env_spec: EnvSpec, teams: list[TeamSpec], max_steps=200):
+def get_rollout(config, env_spec: EnvSpec, teams: list[TeamSpec], team_fcp_agents, rollout_load_step, max_steps=200):
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
     max_steps = min(max_steps, env.max_steps)
 
@@ -272,29 +272,61 @@ def get_rollout(config, checkpoint_load_steps, env_spec: EnvSpec, teams: list[Te
     for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
         team_partners = []
         team_partner_states = []
-        for p_ix in range(partner_count):
+        if team_fcp_agents[team_ix]:
             rng, _rng = jax.random.split(rng)
-            checkpoint_prefix = f"{team_ix}-{p_ix}_"
-            partner, init_partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env, config["CHECKPOINT_DIR"], checkpoint_prefix)
-            team_partner_states.append(partner.load(init_partner_state, checkpoint_load_steps[team_ix]))
+            fcp_prefix = f"fcp-{team_ix}_"
+            partner, init_partner_state = team_fcp_agents[team_ix](
+                _rng, config, env_spec, teams[team_ix], env,
+                config["CHECKPOINT_DIR"], fcp_prefix
+                )
+            loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
+            team_partner_states.append(loaded_partner_state)
             team_partners.append(partner)
+
+        rng, _rng = jax.random.split(rng)
+        checkpoint_prefix = f"{team_ix}-{0}_"
+        partner, init_partner_state = cls_SelfPlayAgent(
+            _rng, config, env_spec, teams[team_ix], env,
+            config["CHECKPOINT_DIR"], checkpoint_prefix
+            )
+        loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
+        team_partner_states.append(loaded_partner_state)
+        team_partners.append(partner)
         partners.append(team_partners)
         partner_states.append(team_partner_states)
 
     map_agent_uid_to_partner_instance = dict()
     for (team_ix, team_spec) in enumerate(teams):
-        for agent_id in team_spec.agent_uids:
-            partner_count = team_spec.agent_count
-            env_instance_count = env_spec.count
-            sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
-            masks = []
-            for i in range(partner_count):
-                masks.append(np.isclose(sampled_partners, i))
-            map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+        for agent_ix, agent_id in enumerate(team_spec.agent_uids):
+            if team_fcp_agents[team_ix]:
+                partner_count = 2
+                env_instance_count = 1
+                if agent_ix == 0:
+                    sampled_partners = np.array([0, ])
+                    masks = []
+                    for i in range(partner_count):
+                        masks.append(np.isclose(sampled_partners, i))
+                    map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+                else:
+                    sampled_partners = np.array([1, ])
+                    masks = []
+                    for i in range(partner_count):
+                        masks.append(np.isclose(sampled_partners, i))
+                    map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+            else:
+                partner_count = 1
+                env_instance_count = 1
+                sampled_partners = np.array([0, ])
+                masks = []
+                for i in range(partner_count):
+                    masks.append(np.isclose(sampled_partners, i))
+                map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
 
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, 1)
     obs, state = jax.vmap(env.reset, in_axes=(0, ))(rng_reset)
+
+    print(map_agent_uid_to_partner_instance)
 
     state_seq = [state, ]
     runner_state = (obs, state), partner_states, rng
@@ -377,6 +409,8 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
 def _make_stage_2(
     config,
     env_spec: EnvSpec, teams: list[TeamSpec],
+    cls_team_fcp_agents: list[None|Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']],
+    checkpoint_load_steps: list[int],
     numpy_seed: int
     ):
 
@@ -394,19 +428,24 @@ def _make_stage_2(
         # Load 3 checkpoints for each partner instance that was trained in stage 1
         # Additionally, create new fcp agent for each team
         # Apart from FCP agent, all other networks will be frozen
-        total_checkpoints = (config["NUM_EPISODES"]*config["NUM_UPDATES"])-1
-        load_steps = [0, total_checkpoints // 2, total_checkpoints]
-        def _frozen_update(rng, trajectories, agent_state):
-            return agent_state, 0 # Just return 0 loss
-        def _frozen_save(agent_state, step):
-            return agent_state
         partners = []
         partner_states = []
         for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
             team_partners = []
             team_partner_states = []
+
+            if cls_team_fcp_agents[team_ix]:
+                rng, _rng = jax.random.split(rng)
+                fcp_agent, fcp_agent_state = cls_team_fcp_agents[team_ix](
+                    _rng, config,
+                    env_spec, teams[team_ix], env,
+                    config["CHECKPOINT_DIR"], f"fcp-{team_ix}_"
+                )
+                team_partners.append(fcp_agent)
+                team_partner_states.append(fcp_agent_state)
+
             for p_ix in range(partner_count):
-                for ckpt_step in load_steps:
+                for ckpt_step in checkpoint_load_steps:
                     rng, _rng = jax.random.split(rng)
                     checkpoint_prefix = f"{team_ix}-{p_ix}_"
                     partner, init_partner_state = cls_SelfPlayAgent(
@@ -414,47 +453,21 @@ def _make_stage_2(
                         env_spec, teams[team_ix], env,
                         config["CHECKPOINT_DIR"], checkpoint_prefix
                         )
+                    loaded_partner_state, fn_frozen_update, fn_frozen_save = partner.load(init_partner_state, ckpt_step)
                     frozen_partner = SelfPlayAgent(
                         partner.get_action,
-                        _frozen_update,
-                        _frozen_save,
+                        fn_frozen_update,
+                        fn_frozen_save,
                         partner.load
                     )
-                    loaded_partner_state = frozen_partner.load(init_partner_state, ckpt_step)
                     team_partners.append(frozen_partner)
                     team_partner_states.append(loaded_partner_state)
+
             partners.append(team_partners)
             partner_states.append(team_partner_states)
 
-
-        # Redefine the 'teams' TeamSpecs in order to correctly reflect the number of partner instances
-        updated_teams = []
-
-        # # Add the fcp agent of each team to a modified list of partner agents
-        # modified_partners = []
-        # for team_ix, team_partners in enumerate(partners):
-        #     rng, _rng = jax.random.split(rng)
-        #     modified_partners.append(
-        #         [ cls_team_actors[team_ix](_rng, config, env_spec, teams[team_ix], env) ]
-        #         + team_partners
-        #     )
-        # Create all parallelised partner agents for each team
-        modified_partners = []
-        partner_states = []
-        for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
-            team_partners = []
-            team_partner_states = []
-            rng, _rng = jax.random.split(rng)
-            fcp_partner, fcp_partner_state = cls_team_actors[team_ix](_rng, config, env_spec, teams[team_ix], env)
-            team_partners.append(fcp_partner)
-            team_partner_states.append(fcp_partner_state)
-            for _ in range(partner_count):
-                rng, _rng = jax.random.split(rng)
-                partner, partner_state = cls_SelfPlayAgent(_rng, config, env_spec, teams[team_ix], env)
-                team_partners.append(partner)
-                team_partner_states.append(partner_state)
-            modified_partners.append(team_partners)
-            partner_states.append(team_partner_states)
+        # There is no need to update the TeamSpec for each of the teams
+        # since this variable won't be used on that way again
 
 
         # Randomly sample partners to assign to agents in their respective teams for each environment
@@ -466,35 +479,54 @@ def _make_stage_2(
         # This will be sampled randomly (which requires a large number of environments to make good training progress)
 
         # Randomly select one agent that will be the fcp target agent
+        # But only if that fcp agent is defined for the given team
         target_agents = [ env.agents[_i] for _i in np_rng.choice(env.num_agents, env_spec.count) ]
 
         map_agent_uid_to_partner_instance = dict()
-        for (team_ix, team_partners) in enumerate(modified_partners):
+        for (team_ix, team_partners) in enumerate(partners):
             for agent_id in teams[team_ix].agent_uids:
                 partner_count = len(team_partners)
                 env_instance_count = env_spec.count
-                # Add +1 after sampling because we want to ignore the target fcp agent at index 0
-                # Choice range is -1 actual to account for that
-                sampled_partners = np_rng.choice(partner_count-1, size=(env_instance_count, ))+1
-                # Replace the 'sampled_partners' with 0 index according to 'fcp_agent_map'
-                for _i in range(sampled_partners.shape[0]):
-                    if target_agents[_i] == agent_id:
-                        sampled_partners[_i] = 0
-                # Continue as with stage 1 with masking
-                masks = []
-                for i in range(partner_count):
-                    masks.append(np.isclose(sampled_partners, i))
-                map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+
+                # If we want to train an fcp agent for this team
+                if cls_team_fcp_agents[team_ix]:
+                    # Add +1 after sampling because we want to ignore the target fcp agent at index 0
+                    # Choice range is -1 actual to account for that
+                    sampled_partners = np_rng.choice(partner_count-1, size=(env_instance_count, ))+1
+                    # Replace the 'sampled_partners' with 0 index according to 'fcp_agent_map'
+                    for _i in range(sampled_partners.shape[0]):
+                        if target_agents[_i] == agent_id:
+                            sampled_partners[_i] = 0
+                    # Continue as with stage 1 with masking
+                    masks = []
+                    for i in range(partner_count):
+                        masks.append(np.isclose(sampled_partners, i))
+                    map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+                else:
+                    # Otherwise use the same sampling as in Stage 1
+                    sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
+                    masks = []
+                    for i in range(partner_count):
+                        masks.append(np.isclose(sampled_partners, i))
+                    map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+
+        # print(map_agent_uid_to_partner_instance)
+        for agent_id, entry in map_agent_uid_to_partner_instance.items():
+            for mask in entry[1]:
+                assert np.any(mask), f"Error Agent mask with no assigned environments, Either increase the number of environments or try a different seed."
 
          # Scan over episodes
         episode_runner_state = env_obsv_state, partner_states, rng
-        last_episode_runner_state, episode_metrics = jax.lax.scan(
-            _make_episode(config, env_spec, teams, env, modified_partners, map_agent_uid_to_partner_instance),
-            episode_runner_state, None,
+        last_episode_runner_state, (episode_metrics, ) = jax.lax.scan(
+            _make_episode(config, env_spec, teams, env, partners, map_agent_uid_to_partner_instance),
+            episode_runner_state,
+            jnp.arange(0, config["NUM_EPISODES"]), # Used to keep track of saved network parameters
             length=config["NUM_EPISODES"]
         )
+
+        unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.mean(jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), axis=-1), episode_metrics)
         
-        return episode_metrics, partners
+        return unravelled_episode_metrics, partners
 
     return _stage_2
 
@@ -509,8 +541,8 @@ class FCP:
     def make_stage_2(
         config,
         env_spec: EnvSpec, teams: list[TeamSpec],
-        partners: list[list[SelfPlayAgent]],
-        cls_team_actors: list[Type[SelfPlayAgent]],
+        cls_team_fcp_agents: list[None|Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']],
+        checkpoint_load_steps: list[int],
         numpy_seed: int
         ):
-        return jax.jit(_make_stage_2(config, env_spec, teams, partners, cls_team_actors, numpy_seed))
+        return jax.jit(_make_stage_2(config, env_spec, teams, cls_team_fcp_agents, checkpoint_load_steps, numpy_seed))

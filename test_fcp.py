@@ -1,27 +1,40 @@
-from collections import OrderedDict
-from copy import deepcopy
-from datetime import datetime
 import os
-import pickle
+# Recommended XLA flags for improving gpu performance
+# https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags
+os.environ['XLA_FLAGS'] = (
+    '--xla_gpu_enable_triton_softmax_fusion=true '
+    '--xla_gpu_triton_gemm_any=True '
+    '--xla_gpu_enable_async_collectives=true '
+    '--xla_gpu_enable_latency_hiding_scheduler=true '
+    '--xla_gpu_enable_highest_priority_async_stream=true '
+)
+
 import sys
-from typing import Any, NamedTuple, Sequence, Type
+import jax
+# Cheap way of detecting whether this was called from my slurm job
+if len(sys.argv) > 1:
+    # Recommended for Slurm environment
+    jax.distributed.initialize()
+
+from datetime import datetime
+
+import pickle
+from typing import Sequence
 
 import distrax
 import flax.linen as nn
-import jax
+
 import jax.numpy as jnp
-import jaxmarl
 import numpy as np
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
+import jaxmarl
 from jaxmarl.environments.overcooked import overcooked_layouts
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 import optax
-import orbax.checkpoint
-from flax.training import orbax_utils
 import matplotlib.pyplot as plt
 
-from ficticious_coplay.fcp import FCP, EnvMapping, EnvSpec, SelfPlayAgent, AgentUID, TeamSpec, _make_stage_2, get_rollout
+from ficticious_coplay.fcp import FCP, EnvSpec, SelfPlayAgent, TeamSpec, _make_stage_2, get_rollout
 
 
 class SimpleNetwork(nn.Module):
@@ -130,7 +143,6 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         update_agent_state = {
             "train_state": updated_train_state
         }
-
         return update_agent_state, total_loss
 
 
@@ -188,7 +200,6 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         updated_agent_state, total_loss = jax.lax.scan(
             _update_minibatch, agent_state, minibatches
         )
-
         return updated_agent_state, total_loss
     
     def save(agent_state, step):
@@ -201,6 +212,11 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         return agent_state
 
     def load(agent_state, step):
+        def _frozen_update(rng, trajectories, agent_state):
+            return agent_state, (jnp.zeros(1), (jnp.zeros(1), jnp.zeros(1), jnp.zeros(1)))
+        def _frozen_save(agent_state, step):
+            return agent_state
+        
         restored_params = None
         with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}.param.ckpt"), 'rb') as f:
             restored_params = pickle.load(f)
@@ -211,7 +227,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             params=restored_params,
             tx=tx
         )
-        return new_agent_state
+        return new_agent_state, _frozen_update, _frozen_save
     
     return SelfPlayAgent(
         get_action,
@@ -260,54 +276,66 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 20, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 3, ['agent_0', 'agent_1']), ]
-
-    # gpu_available = False
-    # try:
-    #     jax.devices('gpu')
-    #     gpu_available = True
-    # except RuntimeError:
-    #     gpu_available = False
-
-    # jit_device = None
-    # if gpu_available:
-    #     jit_device = jax.devices('gpu')[0]
-    # else:
-    #     jit_device = jax.devices('cpu')[0]
+    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
     # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     start_time = datetime.now()
-    episode_metrics, last_episode_runner_state = stage_1_jit(_rng)
+    s1_episode_metrics, s1_last_episode_runner_state = stage_1_jit(_rng)
     stop_time = datetime.now()
-    print(f"Elapsed {stop_time-start_time}")
+    print(f"Stage 1 Elapsed {stop_time-start_time}")
 
 
     total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
-    for team_ix, team_metrics in episode_metrics.items():
+    for team_ix, team_metrics in s1_episode_metrics.items():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
     plt.legend()
-    plt.savefig(f"./out/{job_id}/loss_per_partner.png")
+    plt.savefig(f"./out/{job_id}/stage-1_loss_per_partner.png")
+    plt.close()
 
 
 
-    env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
-    checkpoint_load_steps = [(config["NUM_EPISODES"]*config["NUM_UPDATES"])-1, ]
-    state_seq = get_rollout(config, checkpoint_load_steps, env_spec, teams, max_steps=300)
-    env = jaxmarl.make("overcooked", **{"layout" : overcooked_layouts["cramped_room"]})
-    viz =  OvercookedVisualizer()
-    viz.animate(state_seq, env.agent_view_size, filename=f'./out/{job_id}/animation.gif')
 
-    return episode_metrics, last_episode_runner_state
-
+    total_checkpoints = (config["NUM_EPISODES"]*config["NUM_UPDATES"])-1
+    load_steps = [0, total_checkpoints // 2, total_checkpoints]
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
-    stage_2_jit = _make_stage_2(config, env_spec, teams, partners, team_fcp_agents, numpy_seed)
-    stage_2_jit(_rng)
+    stage_2_jit = _make_stage_2(
+        config, env_spec, teams,
+        team_fcp_agents,
+        load_steps,
+        numpy_seed
+        )
+    start_time = datetime.now()
+    s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
+    stop_time = datetime.now()
+    print(f"Stage 2 Elapsed {stop_time-start_time}")
+
+    total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
+    for team_ix, team_metrics in s2_episode_metrics.items():
+        if team_fcp_agents[team_ix]:
+            p_ix, partner_metrics = 0, team_metrics[0]
+            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}")
+    plt.legend()
+    plt.savefig(f"./out/{job_id}/stage-2_loss_per_partner.png")
+    plt.close()
+
+
+    rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
+    rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
+    rollout_team_fcp_agents = [make_ppo_agent, ]
+    rollout_load_step = config["NUM_UPDATES"] * config["NUM_EPISODES"] - 1
+    rollout_state_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_load_step, max_steps=300)
+    env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
+    viz =  OvercookedVisualizer()
+    viz.animate(rollout_state_seq, env.agent_view_size, filename=f'./out/{job_id}/fcp-animation.gif')
+
+    return None
+
+    
 
 
 if __name__ == "__main__":
