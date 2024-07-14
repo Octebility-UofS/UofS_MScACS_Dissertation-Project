@@ -274,9 +274,10 @@ def main():
         # "NUM_STEPS": 25
     }
     config["_CHECKPOINT_STEPS"] = jnp.linspace(
-        0, config["NUM_UPDATES"] * config["NUM_EPISODES"],
+        0,
+        (config["NUM_UPDATES"] * config["NUM_EPISODES"]) - 1,
         num=config["NUM_CHECKPOINTS"],
-        endpoint=False,
+        endpoint=True,
         dtype=jnp.int32
         )
 
@@ -310,8 +311,8 @@ def main():
 
 
 
-    total_checkpoints = (config["NUM_EPISODES"]*config["NUM_UPDATES"])-1
-    load_steps = [0, total_checkpoints // 2, total_checkpoints]
+    saved_steps = config["_CHECKPOINT_STEPS"]
+    load_steps = [saved_steps[0], saved_steps[saved_steps.shape[0]//2], saved_steps[saved_steps.shape[0]-1]]
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
     stage_2_jit = _make_stage_2(
@@ -338,7 +339,7 @@ def main():
     rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
     rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
     rollout_team_fcp_agents = [make_ppo_agent, ]
-    rollout_load_step = config["NUM_UPDATES"] * config["NUM_EPISODES"] - 1
+    rollout_load_step = config["_CHECKPOINT_STEPS"][config["_CHECKPOINT_STEPS"].shape[0]-1]
     rollout_state_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_load_step, max_steps=300)
     env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
     viz =  OvercookedVisualizer()
