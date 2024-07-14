@@ -22,7 +22,7 @@ class EnvSpec(NamedTuple):
     env_kwargs: Any
 
 class TeamSpec(NamedTuple):
-    agent_class: Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']
+    agent_class: Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any], 'SelfPlayAgent']
     agent_count: int
     agent_uids: list['AgentUID']
 
@@ -227,18 +227,12 @@ def _make_update_step(
                 team_updated_partner_states.append(updated_partner_state)
             updated_partner_states.append(team_updated_partner_states)
 
-        def _save_checkpoint(config, partner, agent_state, current_step):
-            if current_step in config["_CHECKPOINT_STEPS"]:
-                return partner.save(agent_state, current_step)
-            else:
-                return agent_state
-
         # After update, save agent weights as checkpoints
         for team_ix, team_partners in enumerate(partners):
             for p_ix, partner in enumerate(team_partners):
                 agent_state = updated_partner_states[0][0]
-                # jax.experimental.io_callback(partner.save, agent_state, agent_state, save_counter)
-                jax.experimental.io_callback(_save_checkpoint, agent_state, config, partner, agent_state, save_counter)
+                jax.experimental.io_callback(partner.save, agent_state, agent_state, save_counter)
+                # jax.experimental.io_callback(_save_checkpoint, agent_state, config, partner, agent_state, save_counter)
 
         runner_state = env_obsv_state, updated_partner_states, rng
         return runner_state, (metrics, )
@@ -283,7 +277,7 @@ def get_rollout(config, env_spec: EnvSpec, teams: list[TeamSpec], team_fcp_agent
             fcp_prefix = f"fcp-{team_ix}_"
             partner, init_partner_state = team_fcp_agents[team_ix](
                 _rng, config, env_spec, teams[team_ix], env,
-                config["CHECKPOINT_DIR"], fcp_prefix
+                fcp_prefix
                 )
             loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
             team_partner_states.append(loaded_partner_state)
@@ -293,7 +287,7 @@ def get_rollout(config, env_spec: EnvSpec, teams: list[TeamSpec], team_fcp_agent
         checkpoint_prefix = f"{team_ix}-{0}_"
         partner, init_partner_state = cls_SelfPlayAgent(
             _rng, config, env_spec, teams[team_ix], env,
-            config["CHECKPOINT_DIR"], checkpoint_prefix
+            checkpoint_prefix
             )
         loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
         team_partner_states.append(loaded_partner_state)
@@ -331,8 +325,6 @@ def get_rollout(config, env_spec: EnvSpec, teams: list[TeamSpec], team_fcp_agent
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, 1)
     obs, state = jax.vmap(env.reset, in_axes=(0, ))(rng_reset)
-
-    print(map_agent_uid_to_partner_instance)
 
     state_seq = [state, ]
     runner_state = (obs, state), partner_states, rng
@@ -373,7 +365,7 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
                 partner, partner_state = cls_SelfPlayAgent(
                     _rng, config,
                     env_spec, teams[team_ix], env,
-                    config["CHECKPOINT_DIR"], checkpoint_prefix
+                    checkpoint_prefix
                     )
                 team_partners.append(partner)
                 team_partner_states.append(partner_state)
@@ -445,7 +437,7 @@ def _make_stage_2(
                 fcp_agent, fcp_agent_state = cls_team_fcp_agents[team_ix](
                     _rng, config,
                     env_spec, teams[team_ix], env,
-                    config["CHECKPOINT_DIR"], f"fcp-{team_ix}_"
+                    f"fcp-{team_ix}_"
                 )
                 team_partners.append(fcp_agent)
                 team_partner_states.append(fcp_agent_state)
@@ -457,7 +449,7 @@ def _make_stage_2(
                     partner, init_partner_state = cls_SelfPlayAgent(
                         _rng, config,
                         env_spec, teams[team_ix], env,
-                        config["CHECKPOINT_DIR"], checkpoint_prefix
+                        checkpoint_prefix
                         )
                     loaded_partner_state, fn_frozen_update, fn_frozen_save = partner.load(init_partner_state, ckpt_step)
                     frozen_partner = SelfPlayAgent(
@@ -516,7 +508,6 @@ def _make_stage_2(
                         masks.append(np.isclose(sampled_partners, i))
                     map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
 
-        # print(map_agent_uid_to_partner_instance)
         for agent_id, entry in map_agent_uid_to_partner_instance.items():
             for mask in entry[1]:
                 assert np.any(mask), f"Error Agent mask with no assigned environments, Either increase the number of environments or try a different seed."

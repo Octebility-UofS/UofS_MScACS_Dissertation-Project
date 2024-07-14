@@ -11,6 +11,13 @@ os.environ['XLA_FLAGS'] = (
 #os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']= 'false'
 
 import sys
+JOB_ID = "0"
+if len(sys.argv) > 1:
+    JOB_ID = sys.argv[1]
+os.makedirs(os.path.join(".", "out", JOB_ID), exist_ok=True)
+CHECKPOINT_DIR = os.path.join(".", "out", JOB_ID, "checkpoints")
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
 import jax
 # Cheap way of detecting whether this was called from my slurm job
 if len(sys.argv) > 1:
@@ -65,8 +72,8 @@ class SimpleNetwork(nn.Module):
     
 
 
-def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env, checkpoint_dir, checkpoint_prefix):
-    _save_format_step = len(str((config["NUM_EPISODES"]*config["NUM_UPDATES"])-1))
+def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env, checkpoint_prefix):
+    _save_format_step = len(str(int((config["NUM_EPISODES"]*config["NUM_UPDATES"])-1)))
     network = SimpleNetwork(env.action_space().n)
     init_x = jnp.zeros(env.observation_space().shape)
     init_x = init_x.flatten()
@@ -205,12 +212,13 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         return updated_agent_state, total_loss
     
     def save(agent_state, step):
+        if not (step in config["_CHECKPOINT_STEPS"]):
+            return agent_state
         # I guess it's best to pickle and unpickle since the other things don't really seem to work
         # Only save network parameters to save disk space
         target = agent_state["train_state"].params
-        str_step = str(step).zfill(_save_format_step)
-        os.makedirs(checkpoint_dir, exist_ok=True)
-        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'wb') as f:
+        str_step = str(int(step)).zfill(_save_format_step)
+        with open(os.path.join(CHECKPOINT_DIR, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'wb') as f:
             pickle.dump(target, f)
         return agent_state
 
@@ -221,8 +229,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             return agent_state
         
         restored_params = None
-        str_step = str(step).zfill(_save_format_step)
-        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'rb') as f:
+        str_step = str(int(step)).zfill(_save_format_step)
+        with open(os.path.join(CHECKPOINT_DIR, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'rb') as f:
             restored_params = pickle.load(f)
 
         new_agent_state = {}
@@ -239,23 +247,11 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         save,
         load,
     ), init_agent_state
-    
-
-
-
 
 
 
 def main():
-    job_id = "0"
-    if len(sys.argv) > 1:
-        job_id = sys.argv[1]
-    os.makedirs(os.path.join(".", "out", job_id), exist_ok=True)
-
-
-
     config = {
-        "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
         "NUM_CHECKPOINTS": 100,
         "ENV_STEPS": 1e4,
         "NUM_UPDATES": 1e3,
@@ -273,15 +269,13 @@ def main():
         # "NUM_AGENTS": 3, # 32
         # "NUM_STEPS": 25
     }
-    config["_CHECKPOINT_STEPS"] = jnp.linspace(
+    config["_CHECKPOINT_STEPS"] = list(np.linspace(
         0,
         (config["NUM_UPDATES"] * config["NUM_EPISODES"]) - 1,
         num=config["NUM_CHECKPOINTS"],
         endpoint=True,
-        dtype=jnp.int32
-        )
-
-
+        dtype=np.int32
+        ))
 
     rng = jax.random.PRNGKey(0)
     numpy_seed = 0
@@ -300,19 +294,19 @@ def main():
     print(f"Stage 1 Elapsed {stop_time-start_time}")
 
 
-    total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
+    total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     for team_ix, team_metrics in s1_episode_metrics.items():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
     plt.legend()
-    plt.savefig(f"./out/{job_id}/stage-1_loss_per_partner.png")
+    plt.savefig(f"./out/{JOB_ID}/stage-1_loss_per_partner.png")
     plt.close()
 
 
 
 
     saved_steps = config["_CHECKPOINT_STEPS"]
-    load_steps = [saved_steps[0], saved_steps[saved_steps.shape[0]//2], saved_steps[saved_steps.shape[0]-1]]
+    load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
     stage_2_jit = _make_stage_2(
@@ -326,24 +320,24 @@ def main():
     stop_time = datetime.now()
     print(f"Stage 2 Elapsed {stop_time-start_time}")
 
-    total_update_steps = config["NUM_UPDATES"] * config["NUM_EPISODES"]
+    total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     for team_ix, team_metrics in s2_episode_metrics.items():
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}")
     plt.legend()
-    plt.savefig(f"./out/{job_id}/stage-2_loss_per_partner.png")
+    plt.savefig(f"./out/{JOB_ID}/stage-2_loss_per_partner.png")
     plt.close()
 
 
     rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
     rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
     rollout_team_fcp_agents = [make_ppo_agent, ]
-    rollout_load_step = config["_CHECKPOINT_STEPS"][config["_CHECKPOINT_STEPS"].shape[0]-1]
+    rollout_load_step = config["_CHECKPOINT_STEPS"][-1]
     rollout_state_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_load_step, max_steps=300)
     env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
     viz =  OvercookedVisualizer()
-    viz.animate(rollout_state_seq, env.agent_view_size, filename=f'./out/{job_id}/fcp-animation.gif')
+    viz.animate(rollout_state_seq, env.agent_view_size, filename=f'./out/{JOB_ID}/fcp-animation.gif')
 
     return None
 
