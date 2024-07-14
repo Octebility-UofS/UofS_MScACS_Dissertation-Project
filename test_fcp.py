@@ -8,6 +8,7 @@ os.environ['XLA_FLAGS'] = (
     # '--xla_gpu_enable_latency_hiding_scheduler=true '
     # '--xla_gpu_enable_highest_priority_async_stream=true '
 )
+#os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']= 'false'
 
 import sys
 import jax
@@ -252,8 +253,8 @@ def main():
 
     config = {
         "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
-        "ENV_STEPS": 1e6,
-        "NUM_UPDATES": 100,
+        "ENV_STEPS": 1e4,
+        "NUM_UPDATES": 1e3,
         "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,
         # "ANNEAL_LR": True,
@@ -277,7 +278,7 @@ def main():
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
     env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
+    teams = [ TeamSpec(make_ppo_agent, 6, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
