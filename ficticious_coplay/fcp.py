@@ -227,12 +227,18 @@ def _make_update_step(
                 team_updated_partner_states.append(updated_partner_state)
             updated_partner_states.append(team_updated_partner_states)
 
+        def _save_checkpoint(config, partner, agent_state, current_step):
+            if current_step in config["_CHECKPOINT_STEPS"]:
+                return partner.save(agent_state, current_step)
+            else:
+                return agent_state
 
         # After update, save agent weights as checkpoints
         for team_ix, team_partners in enumerate(partners):
             for p_ix, partner in enumerate(team_partners):
                 agent_state = updated_partner_states[0][0]
-                jax.experimental.io_callback(partner.save, agent_state, agent_state, save_counter)
+                # jax.experimental.io_callback(partner.save, agent_state, agent_state, save_counter)
+                jax.experimental.io_callback(_save_checkpoint, agent_state, config, partner, agent_state, save_counter)
 
         runner_state = env_obsv_state, updated_partner_states, rng
         return runner_state, (metrics, )

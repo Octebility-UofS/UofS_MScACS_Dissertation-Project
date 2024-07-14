@@ -253,6 +253,7 @@ def main():
 
     config = {
         "CHECKPOINT_DIR": os.path.join(".", "out", job_id, "checkpoints"),
+        "NUM_CHECKPOINTS": 100,
         "ENV_STEPS": 1e4,
         "NUM_UPDATES": 1e3,
         "NUM_MINIBATCHES": 10,
@@ -269,6 +270,12 @@ def main():
         # "NUM_AGENTS": 3, # 32
         # "NUM_STEPS": 25
     }
+    config["_CHECKPOINT_STEPS"] = jnp.linspace(
+        0, config["NUM_UPDATES"] * config["NUM_EPISODES"],
+        num=config["NUM_CHECKPOINTS"],
+        endpoint=False,
+        dtype=jnp.int32
+        )
 
 
 
