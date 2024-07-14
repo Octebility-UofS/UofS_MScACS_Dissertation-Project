@@ -66,6 +66,7 @@ class SimpleNetwork(nn.Module):
 
 
 def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env, checkpoint_dir, checkpoint_prefix):
+    _save_format_step = len(str((config["NUM_EPISODES"]*config["NUM_UPDATES"])-1))
     network = SimpleNetwork(env.action_space().n)
     init_x = jnp.zeros(env.observation_space().shape)
     init_x = init_x.flatten()
@@ -207,8 +208,9 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         # I guess it's best to pickle and unpickle since the other things don't really seem to work
         # Only save network parameters to save disk space
         target = agent_state["train_state"].params
+        str_step = str(step).zfill(_save_format_step)
         os.makedirs(checkpoint_dir, exist_ok=True)
-        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}.param.ckpt"), 'wb') as f:
+        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'wb') as f:
             pickle.dump(target, f)
         return agent_state
 
@@ -219,7 +221,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             return agent_state
         
         restored_params = None
-        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{step}.param.ckpt"), 'rb') as f:
+        str_step = str(step).zfill(_save_format_step)
+        with open(os.path.join(checkpoint_dir, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'rb') as f:
             restored_params = pickle.load(f)
 
         new_agent_state = {}
