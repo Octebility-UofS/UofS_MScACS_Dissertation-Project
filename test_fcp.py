@@ -310,7 +310,7 @@ def main():
 
     __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
     os.makedirs(__profile_dir, exist_ok=True)
-    jax.profiler.save_device_memory_profile(os.pat.join(__profile_dir, 'mem_stage_1.prof'))
+    jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
 
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
@@ -338,6 +338,10 @@ def main():
     s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
     stop_time = datetime.now()
     print(f"Stage 2 Elapsed {stop_time-start_time}")
+
+    __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
+    os.makedirs(__profile_dir, exist_ok=True)
+    jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     for team_ix, team_metrics in s2_episode_metrics.items():
