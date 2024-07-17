@@ -7,15 +7,16 @@ import os
     # '--xla_gpu_enable_async_collectives=true '
     # '--xla_gpu_enable_latency_hiding_scheduler=true '
     # '--xla_gpu_enable_highest_priority_async_stream=true '
-)
+#)
 #os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']= 'false'
 
 import sys
 JOB_ID = "0"
 if len(sys.argv) > 1:
     JOB_ID = sys.argv[1]
-os.makedirs(os.path.join(".", "out", JOB_ID), exist_ok=True)
-CHECKPOINT_DIR = os.path.join(".", "out", JOB_ID, "checkpoints")
+ROOT_DIR = os.path.join('.', 'out', JOB_ID)
+os.makedirs(ROOT_DIR, exist_ok=True)
+CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 import jax
@@ -292,6 +293,10 @@ def main():
     s1_episode_metrics, s1_last_episode_runner_state = stage_1_jit(_rng)
     stop_time = datetime.now()
     print(f"Stage 1 Elapsed {stop_time-start_time}")
+
+    __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
+    os.makedirs(__profile_dir, exist_ok=True)
+    jax.profiler.save_device_memory_profile(os.pat.join(__profile_dir, 'mem_stage_1.prof'))
 
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
