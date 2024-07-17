@@ -80,7 +80,21 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     init_x = init_x.flatten()
     init_rng, _rng = jax.random.split(init_rng)
     network_params = network.init(_rng, init_x)
-    tx = optax.chain(optax.clip_by_global_norm(config["MAX_GRAD_NORM"]), optax.adam(config["LR"], eps=1e-5))
+
+    def linear_schedule(count):
+        frac = 1.0 - (count // (config["NUM_MINIBATCHES"] * config["ENV_STEPS"])) / config["NUM_UPDATES"]
+        return config["LR"] * frac
+    tx = None
+    if config["ANNEAL_LR"]:
+        tx = optax.chain(
+            optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+            optax.adam(learning_rate=linear_schedule, eps=1e-5),
+            )
+    else:
+        tx = optax.chain(
+            optax.clip_by_global_norm(config["MAX_GRAD_NORM"]),
+            optax.adam(config["LR"], eps=1e-5)
+            )
 
     init_agent_state = {}
     init_agent_state["train_state"] = TrainState.create(
@@ -254,11 +268,11 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 1e4,
-        "NUM_UPDATES": 1e3,
-        "NUM_MINIBATCHES": 10,
+        "ENV_STEPS": 1e7,
+        "NUM_UPDATES": 1e2,
+        "NUM_MINIBATCHES": 1e3,
         "NUM_EPISODES": 1,
-        # "ANNEAL_LR": True,
+        "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
         "LR": 2.5e-4,
         "GAMMA": 0.99,
