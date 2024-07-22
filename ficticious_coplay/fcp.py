@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from copy import deepcopy
+from functools import partial
 import os
 import pickle
 from typing import Any, Callable, NamedTuple, Sequence, Type
@@ -13,6 +14,8 @@ import numpy as np
 from jaxmarl.environments import SimpleReferenceMPE
 import orbax.checkpoint as ocp
 from flax.training import orbax_utils
+
+from ficticious_coplay.util.util import rec_frozenset
 
 
 # TODO
@@ -66,10 +69,40 @@ class Transition(NamedTuple):
     reward: jnp.ndarray
     obs: jnp.ndarray
     info: jnp.ndarray
+
+
+@partial(jax.jit, static_argnames=['map_agent_uid_to_partner_instance',])
+def transform_env_partner(
+    pytree,
+    map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]]
+    ):
+    transformed_mapping = dict()
+    for team_ix, partner_mapping in map_agent_uid_to_partner_instance:
+        transformed_mapping[team_ix] = dict()
+        for partner_ix, agent_mapping in partner_mapping:
+            transformed_mapping[team_ix][partner_ix] = jnp.concatenate(
+                [ pytree[agent_id][s0: s1] for agent_id, (s0, s1) in agent_mapping ]
+            )
+    return transformed_mapping
+
+@partial(jax.jit, static_argnames=['reverse_map_agent_uid_to_partner_instance',])
+def untransform_env_partner(
+    transformed_mapping,
+    reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
+    ):
+    pytree = dict()
+    for team_ix, agent_mapping in reverse_map_agent_uid_to_partner_instance:
+        for agent_id, partner_mapping in agent_mapping:
+            # We don't need to worry about other teams as we explictly assign each agent to exactly one team
+            pytree[agent_id] = jnp.concatenate(
+                [ transformed_mapping[team_ix][partner_ix][s0: s1] for _, (partner_ix, (s0, s1)) in partner_mapping ]
+            )
+    return pytree
+
     
 
 def _make_envs_step(
-    map_agent_uid_to_partner_instance: dict[int, dict[str, jax.Array], int],
+    map_agent_uid_to_partner_instance: dict[int, dict[int, tuple[int, int]]],
     env_spec: EnvSpec, env,
     partners: list[list[SelfPlayAgent]]
     ):
@@ -200,7 +233,7 @@ def _make_envs_step(
 
 
 def _make_update_step(
-    config, map_agent_uid_to_partner_instance,
+    config, map_agent_uid_to_partner_instance: dict[int, dict[int, tuple[int, int]]],
     env_spec: EnvSpec, teams: list[TeamSpec], env,
     partners: list[list[SelfPlayAgent]]
     ):
@@ -239,7 +272,7 @@ def _make_update_step(
     return _update_step
 
 
-def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partners, map_agent_uid_to_partner_instance):
+def _make_episode(config, env_spec: EnvSpec, teams: list[TeamSpec], env, partners, map_agent_uid_to_partner_instance: dict[int, dict[int, tuple[int, int]]]):
     def _episode(runner_episode, counter):
         env_obsv_state, partner_states, rng = runner_episode
 
@@ -372,20 +405,62 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
             partners.append(team_partners)
             partner_states.append(team_partner_states)
 
-
-        # We need to randomly sample partner agents to assign them to environment instances
-        # The current assumption is that this random sampling is the same for each episode
-        # Boolean masks are used to be able to split them up during stepping and combine them for each partner instance
+        # Split the environment instances up into evenly sized ranges
+        # For each agent in each team, ranges are randomly assigned for each partner instance
+        # This vastly simplifies the complexity of transforming observations
+        # While still keeping an element of randomness
         map_agent_uid_to_partner_instance = dict()
         for (team_ix, team_spec) in enumerate(teams):
+            map_agent_uid_to_partner_instance[team_ix] = dict()
             for agent_id in team_spec.agent_uids:
                 partner_count = team_spec.agent_count
                 env_instance_count = env_spec.count
-                sampled_partners = np_rng.choice(partner_count, size=(env_instance_count, ))
-                masks = []
-                for i in range(partner_count):
-                    masks.append(np.isclose(sampled_partners, i))
-                map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+                # get evenly spaced 'slicing indexes'
+                # according to number of partners and environments
+                slice_ixs = np.linspace(0, env_instance_count, partner_count+1, dtype=int)
+                # get a random permutation of assigning partner instances to slices
+                partner_instance_permutation = np_rng.permutation(np.arange(partner_count))
+                for ix, partner_ix in enumerate(partner_instance_permutation):
+                    if partner_ix not in map_agent_uid_to_partner_instance[team_ix]:
+                        map_agent_uid_to_partner_instance[team_ix][partner_ix] = dict()
+                    map_agent_uid_to_partner_instance[team_ix][partner_ix][agent_id] = (slice_ixs[ix], slice_ixs[ix+1])
+            # Convert dict of agent id's to slices into a list sorted by agent id
+            for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
+                map_agent_uid_to_partner_instance[team_ix][partner_ix] = [
+                    item for item in sorted(agent_mapping.items(), key=lambda t: t[0])
+                ]
+        
+        print(map_agent_uid_to_partner_instance)
+
+        reverse_map_agent_uid_to_partner_instance = dict()
+        for (team_ix, team_spec) in enumerate(teams):
+            reverse_map_agent_uid_to_partner_instance[team_ix] = dict()
+            for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
+                slice_indexes = np.cumsum([0,] + [ s1 - s0 for agent_id, (s0, s1) in agent_mapping ])
+                for ix, (agent_id, tuple_slice) in enumerate(agent_mapping):
+                    if agent_id not in reverse_map_agent_uid_to_partner_instance[team_ix]:
+                        reverse_map_agent_uid_to_partner_instance[team_ix][agent_id] = dict()
+                    reverse_map_agent_uid_to_partner_instance[team_ix][agent_id][tuple_slice] = (partner_ix, (slice_indexes[ix], slice_indexes[ix+1]))
+            # Convert dict of target tuple slices to a list in increasing order for correct concatenation
+            for agent_id, tuple_mapping in reverse_map_agent_uid_to_partner_instance[team_ix].items():
+                reverse_map_agent_uid_to_partner_instance[team_ix][agent_id] = [
+                    item for item in sorted(tuple_mapping.items(), key=lambda t: t[0][0])
+                ]
+
+        print(reverse_map_agent_uid_to_partner_instance)
+
+        map_agent_uid_to_partner_instance = rec_frozenset(map_agent_uid_to_partner_instance)
+        reverse_map_agent_uid_to_partner_instance = rec_frozenset(reverse_map_agent_uid_to_partner_instance)
+
+        test_tree = {'agent_0': jnp.arange(20), 'agent_1': 20+jnp.arange(20)}
+        print(test_tree)
+
+        transformed_tree = transform_env_partner(test_tree, map_agent_uid_to_partner_instance)
+        print(transformed_tree)
+        untransformed_tree = untransform_env_partner(transformed_tree, reverse_map_agent_uid_to_partner_instance)
+        print(untransformed_tree)
+        print("untransform inverse of transform?", jax.tree_util.tree_all(jax.tree_map(jnp.allclose, test_tree, untransformed_tree)))
+        raise ValueError("Hi There :)")
 
         # Scan over episodes
         episode_runner_state = env_obsv_state, partner_states, rng
@@ -532,6 +607,8 @@ def _make_stage_2(
 class FCP:
     @staticmethod
     def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
+        _make_stage_1(config, env_spec, teams, numpy_seed)(jax.random.PRNGKey(0))
+        raise ValueError("Oops forgot to re-jit")
         return jax.jit(_make_stage_1(config, env_spec, teams, numpy_seed))
 
     @staticmethod
