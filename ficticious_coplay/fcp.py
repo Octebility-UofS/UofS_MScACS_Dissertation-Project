@@ -107,6 +107,7 @@ def _make_envs_step(
     env_spec: EnvSpec, env,
     partners: list[list[SelfPlayAgent]]
     ):
+    @jax.jit
     def _envs_step(runner_state, _):
         env_obsv_state, partner_states, rng = runner_state
 
@@ -187,6 +188,7 @@ def _make_update_step(
     env_spec: EnvSpec, teams: list[TeamSpec], env,
     partners: list[list[SelfPlayAgent]]
     ):
+    @jax.jit
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):
         # Collect Trajectories
         runner_state, (trajectories, _) = jax.lax.scan(
@@ -230,6 +232,7 @@ def _make_episode(
     map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]],
     reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
     ):
+    @jax.jit
     def _episode(runner_episode, counter):
         env_obsv_state, partner_states, rng = runner_episode
 
@@ -392,8 +395,6 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
                     item for item in sorted(agent_mapping.items(), key=lambda t: t[0])
                 ]
 
-        print(map_agent_uid_to_partner_instance)
-
         reverse_map_agent_uid_to_partner_instance = dict()
         for (team_ix, team_spec) in enumerate(teams):
             reverse_map_agent_uid_to_partner_instance[team_ix] = dict()
@@ -517,7 +518,6 @@ def _make_stage_2(
             [ len(teams[team_ix].agent_uids) for team_ix, mk_fn in enumerate(cls_team_fcp_agents) if mk_fn ]
             )
         raw_fcp_slice_ixs = np.linspace(0, env_instance_count, num_fcp_assignments+1, dtype=int)
-        print(raw_fcp_slice_ixs)
         fcp_slice_ixs = dict()
         _counter = 0
         for team_ix, mk_fn in enumerate(cls_team_fcp_agents):
@@ -528,50 +528,73 @@ def _make_stage_2(
                     _counter += 1
             else:
                 fcp_slice_ixs[team_ix] = None
-        print(fcp_slice_ixs)
         # ====
-        # TODO make the fcp agent assignment more sophisticated
-        # TODO it would currently work fine with only one team, however there 
         map_agent_uid_to_partner_instance = dict()
         for (team_ix, team_spec) in enumerate(teams):
             map_agent_uid_to_partner_instance[team_ix] = dict()
             partner_count = team_spec.agent_count
-            env_instance_count = env_spec.count
 
-
-
-
-
-        
-        map_agent_uid_to_partner_instance = dict()
-        for (team_ix, team_spec) in enumerate(teams):
-            map_agent_uid_to_partner_instance[team_ix] = dict()
-            partner_count = len(partners[team_ix])
-            env_instance_count = env_spec.count
-            # get evenly spaced 'slicing indexes'
-            # according to number of partners and environments
-            slice_ixs = np.linspace(0, env_instance_count, partner_count+1, dtype=int)
-            # Importantly, make sure that the FCP partners don't have common slices between different agents
-            for agent_ix, agent_id in enumerate(team_spec.agent_uids):
-                # assign the 'index' slice to the fcp agent (fcp agent is index 0)
-                if 0 not in map_agent_uid_to_partner_instance[team_ix]:
-                        map_agent_uid_to_partner_instance[team_ix][0] = dict()
-                map_agent_uid_to_partner_instance[team_ix][0][agent_id] = (slice_ixs[agent_ix], slice_ixs[agent_ix+1])
-                # Assign the rest of the partners to the other index slices
-                partner_instance_permutation = np_rng.permutation(
-                    np.concatenate([np.arange(0, agent_ix), np.arange(agent_ix+1, partner_count)])
-                )
-                for ix, partner_ix in enumerate(partner_instance_permutation):
-                    if partner_ix not in map_agent_uid_to_partner_instance[team_ix]:
-                        map_agent_uid_to_partner_instance[team_ix][partner_ix] = dict()
-                    map_agent_uid_to_partner_instance[team_ix][partner_ix][agent_id] = (slice_ixs[ix], slice_ixs[ix+1])
+            # We need to act differently depending on whether an FCP partner is present
+            if fcp_slice_ixs[team_ix]:
+                fcp_partner_ix = 0
+                # Assign FCP partner a range for each agent in the team
+                for agent_id in team_spec.agent_uids:
+                    if fcp_partner_ix not in map_agent_uid_to_partner_instance[team_ix]:
+                        map_agent_uid_to_partner_instance[team_ix][fcp_partner_ix] = dict()
+                    map_agent_uid_to_partner_instance[team_ix][fcp_partner_ix][agent_id] = fcp_slice_ixs[team_ix][agent_id]
+                # Assign the remaining partners
+                for agent_id in team_spec.agent_uids:
+                    # Create slice indexes for the other partners with the remaining ranges
+                    slice_ixs = None
+                    # First check if fcp range is at lower bound or upper bound
+                    if fcp_slice_ixs[team_ix][agent_id][0] == 0:
+                        # In this case, we can use a simple linspace
+                        # Use partner_count instead of partner_count+1 since we don't need to assign to FCP agent
+                        _linspace_slices = np.linspace(fcp_slice_ixs[team_ix][agent_id][1], env_instance_count, partner_count, dtype=int)
+                        slice_ixs = [ (s0, s1) for (s0, s1) in zip(_linspace_slices, _linspace_slices[1:]) ]
+                    elif fcp_slice_ixs[team_ix][agent_id][1] == env_instance_count:
+                        # In this case, we can use a simple linspace
+                        # Use partner_count instead of partner_count+1 since we don't need to assign to FCP agent
+                        _linspace_slices = np.linspace(0, fcp_slice_ixs[team_ix][agent_id][0], partner_count, dtype=int)
+                        slice_ixs = [ _slice for _slice in zip(_linspace_slices, _linspace_slices[1:]) ]
+                    else:
+                        # We need to splice together two linspace arrays
+                        # First calculate ratio between the two ranges and assign linspace accordingly
+                        lower_range = (0, fcp_slice_ixs[team_ix][agent_id][0])
+                        upper_range = (fcp_slice_ixs[team_ix][agent_id][1], env_instance_count)
+                        lower_range_ratio = ( (lower_range[1]-lower_range[0]) + (upper_range[1]-upper_range[0]) ) / (lower_range[1]-lower_range[0])
+                        total_range_partners = partner_count - 1 # Since we take away one FCP partner
+                        lower_range_partners = total_range_partners // lower_range_ratio
+                        upper_range_partners = total_range_partners - lower_range_partners
+                        lower_linspace = np.linspace(lower_range[0], lower_range[1], lower_range_partners+1, dtype=int)
+                        upper_linspace = np.linspace(upper_range[0], upper_range[1], upper_range_partners+1, dtype=int)
+                        slice_ixs = (
+                            [ _slice for _slice in zip(lower_linspace, lower_linspace[1:]) ]
+                            + [ _slice for _slice in zip(upper_linspace, upper_linspace[1:]) ]
+                            )
+                    # Now that we have the slices, create a permutation of the available partners and assignt the slices
+                    # skip index 0 since that's the fcp partner
+                    partner_instance_permutation = np_rng.permutation(np.arange(1, partner_count))
+                    for ix, partner_ix in enumerate(partner_instance_permutation):
+                        if partner_ix not in map_agent_uid_to_partner_instance[team_ix]:
+                            map_agent_uid_to_partner_instance[team_ix][partner_ix] = dict()
+                        map_agent_uid_to_partner_instance[team_ix][partner_ix][agent_id] = slice_ixs[ix]
+            else:
+                # Otherwise, we don't have an fcp partner and we can generate the index as normal
+                _linspace_slices = np.linspace(0, env_instance_count, partner_count+1, dtype=int)
+                slice_ixs = [ (s0, s1) for (s0, s1) in zip(_linspace_slices, _linspace_slices[1:]) ]
+                for agent_id in team_spec.agent_uids:
+                    # get a random permutation of assigning partner instances to slices
+                    partner_instance_permutation = np_rng.permutation(np.arange(partner_count))
+                    for ix, partner_ix in enumerate(partner_instance_permutation):
+                        if partner_ix not in map_agent_uid_to_partner_instance[team_ix]:
+                            map_agent_uid_to_partner_instance[team_ix][partner_ix] = dict()
+                        map_agent_uid_to_partner_instance[team_ix][partner_ix][agent_id] = slice_ixs[ix]
             # Convert dict of agent id's to slices into a list sorted by agent id
             for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
                 map_agent_uid_to_partner_instance[team_ix][partner_ix] = [
                     item for item in sorted(agent_mapping.items(), key=lambda t: t[0])
                 ]
-
-        print(map_agent_uid_to_partner_instance)
 
         reverse_map_agent_uid_to_partner_instance = dict()
         for (team_ix, team_spec) in enumerate(teams):
@@ -618,6 +641,7 @@ def _make_stage_2(
 class FCP:
     @staticmethod
     def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
+        return _make_stage_1(config, env_spec, teams, numpy_seed)
         return jax.jit(_make_stage_1(config, env_spec, teams, numpy_seed))
 
     @staticmethod
@@ -628,4 +652,5 @@ class FCP:
         checkpoint_load_steps: list[int],
         numpy_seed: int
         ):
+        return _make_stage_2(config, env_spec, teams, cls_team_fcp_agents, checkpoint_load_steps, numpy_seed)
         return jax.jit(_make_stage_2(config, env_spec, teams, cls_team_fcp_agents, checkpoint_load_steps, numpy_seed))
