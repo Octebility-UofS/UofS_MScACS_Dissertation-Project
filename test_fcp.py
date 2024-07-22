@@ -270,7 +270,7 @@ def main():
         "NUM_CHECKPOINTS": 100,
         "ENV_STEPS": 30,
         "NUM_UPDATES": 100,
-        "NUM_MINIBATCHES": 2,
+        "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,
         "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
@@ -297,7 +297,7 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 20, {"layout" : overcooked_layouts["cramped_room"]})
+    env_spec = EnvSpec("overcooked", 40, {"layout" : overcooked_layouts["cramped_room"]})
     teams = [ TeamSpec(make_ppo_agent, 4, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
@@ -324,33 +324,33 @@ def main():
 
 
 
-    # saved_steps = config["_CHECKPOINT_STEPS"]
-    # load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
-    # team_fcp_agents = [make_ppo_agent, ]
-    # rng, _rng = jax.random.split(rng)
-    # stage_2_jit = _make_stage_2(
-    #     config, env_spec, teams,
-    #     team_fcp_agents,
-    #     load_steps,
-    #     numpy_seed
-    #     )
-    # start_time = datetime.now()
-    # s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
-    # stop_time = datetime.now()
-    # print(f"Stage 2 Elapsed {stop_time-start_time}")
+    saved_steps = config["_CHECKPOINT_STEPS"]
+    load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
+    team_fcp_agents = [make_ppo_agent, ]
+    rng, _rng = jax.random.split(rng)
+    stage_2_jit = _make_stage_2(
+        config, env_spec, teams,
+        team_fcp_agents,
+        load_steps,
+        numpy_seed
+        )
+    start_time = datetime.now()
+    s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
+    stop_time = datetime.now()
+    print(f"Stage 2 Elapsed {stop_time-start_time}")
 
-    # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
-    # os.makedirs(__profile_dir, exist_ok=True)
-    # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
+    __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
+    os.makedirs(__profile_dir, exist_ok=True)
+    jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
 
-    # total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
-    # for team_ix, team_metrics in s2_episode_metrics.items():
-    #     if team_fcp_agents[team_ix]:
-    #         p_ix, partner_metrics = 0, team_metrics[0]
-    #         plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}")
-    # plt.legend()
-    # plt.savefig(f"./out/{JOB_ID}/stage-2_loss_per_partner.png")
-    # plt.close()
+    total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
+    for team_ix, team_metrics in s2_episode_metrics.items():
+        if team_fcp_agents[team_ix]:
+            p_ix, partner_metrics = 0, team_metrics[0]
+            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}")
+    plt.legend()
+    plt.savefig(f"./out/{JOB_ID}/stage-2_loss_per_partner.png")
+    plt.close()
 
 
     # rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
