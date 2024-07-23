@@ -103,6 +103,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         tx=tx,
     )
 
+    @jax.jit
     def get_action(rng, obsv, flattened_obsv, agent_state):
         pi, value = network.apply(agent_state["train_state"].params, flattened_obsv)
         rng, _rng = jax.random.split(rng)
@@ -113,6 +114,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 
     # This actually seems to be IPPO loss
     # TODO
+    @jax.jit
     def _loss_fn(net_train_state_params, traj_batch, gae, targets):
         # net_train_state_params = agent_state["train_state"].params
         # gae = Advantages
@@ -157,6 +159,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         )
         return total_loss, (value_loss, loss_actor, entropy)
     
+    @jax.jit
     def _update_minibatch(agent_state, batch_data):
         trajectories, advantages, targets = batch_data
 
@@ -170,6 +173,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
         return update_agent_state, total_loss
 
 
+    @jax.jit
     def update(rng, trajectories, agent_state):
         done, actions, aux_data, reward, observations, info = trajectories
 
@@ -268,7 +272,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 100,
+        "ENV_STEPS": 1e5,
         "NUM_UPDATES": 100,
         "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,

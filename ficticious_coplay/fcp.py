@@ -232,7 +232,6 @@ def _make_episode(
     map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]],
     reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
     ):
-    @jax.jit
     def _episode(runner_episode, counter):
         env_obsv_state, partner_states, rng = runner_episode
 
