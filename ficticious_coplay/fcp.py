@@ -175,7 +175,7 @@ def _make_envs_step(
 
         
         runner_state = updated_env_obsv_state, updated_partner_states, rng
-        return runner_state, (agent_transitions, env_state)
+        return runner_state, agent_transitions
 
 
     return _envs_step
@@ -191,7 +191,7 @@ def _make_update_step(
     @jax.jit
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):
         # Collect Trajectories
-        runner_state, (trajectories, _) = jax.lax.scan(
+        runner_state, trajectories = jax.lax.scan(
             _make_envs_step(
                 map_agent_uid_to_partner_instance,
                 reverse_map_agent_uid_to_partner_instance,
@@ -257,67 +257,134 @@ def _make_episode(
     return _episode
 
 
-def get_rollout(config, env_spec: EnvSpec, teams: list[TeamSpec], team_fcp_agents, rollout_load_step, max_steps=200):
+def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_agents, rollout_load_step, max_steps=200):
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
     max_steps = min(max_steps, env.max_steps)
 
     np_rng = np.random.default_rng(0)
     rng = jax.random.PRNGKey(0)
 
+    teams = [
+        TeamSpec(
+            spec.agent_class,
+            len(spec.agent_uids),
+            spec.agent_uids
+            ) for spec in team_specs
+    ]
+
     partners = []
     partner_states = []
     for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
         team_partners = []
         team_partner_states = []
-        if team_fcp_agents[team_ix]:
-            rng, _rng = jax.random.split(rng)
-            fcp_prefix = f"fcp-{team_ix}_"
-            partner, init_partner_state = team_fcp_agents[team_ix](
-                _rng, config, env_spec, teams[team_ix], env,
-                fcp_prefix
-                )
-            loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
-            team_partner_states.append(loaded_partner_state)
-            team_partners.append(partner)
-
-        rng, _rng = jax.random.split(rng)
-        checkpoint_prefix = f"{team_ix}-{0}_"
-        partner, init_partner_state = cls_SelfPlayAgent(
-            _rng, config, env_spec, teams[team_ix], env,
-            checkpoint_prefix
-            )
-        loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
-        team_partner_states.append(loaded_partner_state)
-        team_partners.append(partner)
+        for count in range(partner_count):
+            if count == 0 and team_fcp_agents[team_ix]:
+                rng, _rng = jax.random.split(rng)
+                fcp_prefix = f"fcp-{team_ix}_"
+                partner, init_partner_state = team_fcp_agents[team_ix](
+                    _rng, config, env_spec, teams[team_ix], env,
+                    fcp_prefix
+                    )
+                loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
+                team_partner_states.append(loaded_partner_state)
+                team_partners.append(partner)
+            else:
+                rng, _rng = jax.random.split(rng)
+                checkpoint_prefix = f"{team_ix}-{count}_"
+                partner, init_partner_state = cls_SelfPlayAgent(
+                    _rng, config, env_spec, teams[team_ix], env,
+                    checkpoint_prefix
+                    )
+                loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
+                team_partner_states.append(loaded_partner_state)
+                team_partners.append(partner)
         partners.append(team_partners)
         partner_states.append(team_partner_states)
 
+
+    env_instance_count = 1
     map_agent_uid_to_partner_instance = dict()
     for (team_ix, team_spec) in enumerate(teams):
-        for agent_ix, agent_id in enumerate(team_spec.agent_uids):
-            if team_fcp_agents[team_ix]:
-                partner_count = 2
-                env_instance_count = 1
-                if agent_ix == 0:
-                    sampled_partners = np.array([0, ])
-                    masks = []
-                    for i in range(partner_count):
-                        masks.append(np.isclose(sampled_partners, i))
-                    map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
-                else:
-                    sampled_partners = np.array([1, ])
-                    masks = []
-                    for i in range(partner_count):
-                        masks.append(np.isclose(sampled_partners, i))
-                    map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
-            else:
-                partner_count = 1
-                env_instance_count = 1
-                sampled_partners = np.array([0, ])
-                masks = []
-                for i in range(partner_count):
-                    masks.append(np.isclose(sampled_partners, i))
-                map_agent_uid_to_partner_instance[agent_id] = ( team_ix, masks, partner_count )
+        map_agent_uid_to_partner_instance[team_ix] = dict()
+        partner_count = team_spec.agent_count
+        for p_ix, agent_id in enumerate(team_spec.agent_uids):
+            map_agent_uid_to_partner_instance[team_ix][p_ix] = {agent_id: (0, env_instance_count)}
+        # Convert dict of agent id's to slices into a list sorted by agent id
+        for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
+            map_agent_uid_to_partner_instance[team_ix][partner_ix] = [
+                item for item in sorted(agent_mapping.items(), key=lambda t: t[0])
+            ]
+
+    reverse_map_agent_uid_to_partner_instance = dict()
+    for (team_ix, team_spec) in enumerate(teams):
+        reverse_map_agent_uid_to_partner_instance[team_ix] = dict()
+        for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
+            slice_indexes = np.cumsum([0,] + [ s1 - s0 for agent_id, (s0, s1) in agent_mapping ])
+            for ix, (agent_id, tuple_slice) in enumerate(agent_mapping):
+                if agent_id not in reverse_map_agent_uid_to_partner_instance[team_ix]:
+                    reverse_map_agent_uid_to_partner_instance[team_ix][agent_id] = dict()
+                reverse_map_agent_uid_to_partner_instance[team_ix][agent_id][tuple_slice] = (partner_ix, (slice_indexes[ix], slice_indexes[ix+1]))
+        # Convert dict of target tuple slices to a list in increasing order for correct concatenation
+        for agent_id, tuple_mapping in reverse_map_agent_uid_to_partner_instance[team_ix].items():
+            reverse_map_agent_uid_to_partner_instance[team_ix][agent_id] = [
+                item for item in sorted(tuple_mapping.items(), key=lambda t: t[0][0])
+            ]
+
+    # The maps need to be hashable in order to be used as static arguments by partial jax.jit
+    # So we are transform dictionaries and lists into immutable datatypes (frozenset and tuple)
+    map_agent_uid_to_partner_instance = rec_frozenset(map_agent_uid_to_partner_instance)
+    reverse_map_agent_uid_to_partner_instance = rec_frozenset(reverse_map_agent_uid_to_partner_instance)
+
+    def _runner_rollout(runner_state, _):
+        env_obsv_state, partner_states, rng = runner_state
+
+        # Transform all observation vectors to group them by partner agents
+        env_obsv, env_state = env_obsv_state
+        transformed_observations = transform_env_partner(env_obsv, map_agent_uid_to_partner_instance)
+
+        # Run each transformed stack of observations through their respective parntner agents
+        updated_partner_states = []
+        tree_partner_actions = dict()
+        tree_partner_aux_data = dict()
+        for team_ix, team_partners in enumerate(partners):
+            team_updated_partner_states = []
+            tree_partner_actions[team_ix] = dict()
+            tree_partner_aux_data[team_ix] = dict()
+            for p_ix, partner in enumerate(team_partners):
+                agent_state = partner_states[team_ix][p_ix]
+                partner_observations = transformed_observations[team_ix][p_ix]
+                flattened_partner_observations = partner_observations.reshape((partner_observations.shape[0], -1))
+
+                rng, _rng = jax.random.split(rng)
+                agent_state, agent_actions, agent_aux_data = partner.get_action(
+                    _rng,
+                    partner_observations,
+                    flattened_partner_observations,
+                    agent_state
+                    )
+
+                team_updated_partner_states.append(agent_state)
+                tree_partner_actions[team_ix][p_ix] = agent_actions
+                tree_partner_aux_data[team_ix][p_ix] = agent_aux_data
+            updated_partner_states.append(team_updated_partner_states)
+
+
+        # Reverse the process with the stacked actions to use them for stepping the environments
+        env_act = untransform_env_partner(tree_partner_actions, reverse_map_agent_uid_to_partner_instance)
+        
+        #STEP ENVIRONMENTS
+        env_obsv, env_state = env_obsv_state
+        rng, _rng = jax.random.split(rng)
+        rng_step = jax.random.split(_rng, env_spec.count)
+        new_env_obsv, new_env_state, reward, done, info = jax.vmap(
+                env.step, in_axes=(0,0,0)
+            )(rng_step, env_state, env_act)
+        updated_env_obsv_state = new_env_obsv, new_env_state
+
+        # Collect new runner state and record state
+        runner_state = updated_env_obsv_state, updated_partner_states, rng
+        return runner_state, new_env_state
+
 
     rng, _rng = jax.random.split(rng)
     rng_reset = jax.random.split(_rng, 1)
@@ -325,11 +392,11 @@ def get_rollout(config, env_spec: EnvSpec, teams: list[TeamSpec], team_fcp_agent
 
     state_seq = [state, ]
     runner_state = (obs, state), partner_states, rng
-    _, (_, env_states) = jax.lax.scan(
-            _make_envs_step(map_agent_uid_to_partner_instance, env_spec, env, partners),
-            runner_state, None,
-            length=max_steps
-        )
+    _, env_states = jax.lax.scan(
+        _runner_rollout,
+        runner_state, None,
+        length=max_steps
+    )
     # Unbatchify the states since they're currently of shape [1, :]
     state_seq += [ jax.tree_map(lambda x: x[i], env_states) for i in range(max_steps) ]
     unbatched_state_seq = [ jax.tree_map(lambda x: x[0], state) for state in state_seq ]
