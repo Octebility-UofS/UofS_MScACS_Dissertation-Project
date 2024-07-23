@@ -272,9 +272,9 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 1e5,
+        "ENV_STEPS": 1e6,
         "NUM_UPDATES": 100,
-        "NUM_MINIBATCHES": 10,
+        "NUM_MINIBATCHES": 1000,
         "NUM_EPISODES": 1,
         "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
@@ -306,7 +306,6 @@ def main():
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
-    # stage_1_jit = jax.jit(FCP.make_stage_1(config, env_mapping, numpy_seed))
     start_time = datetime.now()
     s1_episode_metrics, s1_last_episode_runner_state = stage_1_jit(_rng)
     stop_time = datetime.now()
@@ -332,7 +331,7 @@ def main():
     load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
     team_fcp_agents = [make_ppo_agent, ]
     rng, _rng = jax.random.split(rng)
-    stage_2_jit = _make_stage_2(
+    stage_2_jit = FCP.make_stage_2(
         config, env_spec, teams,
         team_fcp_agents,
         load_steps,
@@ -357,14 +356,14 @@ def main():
     plt.close()
 
 
-    # rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
-    # rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
-    # rollout_team_fcp_agents = [make_ppo_agent, ]
-    # rollout_load_step = config["_CHECKPOINT_STEPS"][-1]
-    # rollout_state_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_load_step, max_steps=300)
-    # env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
-    # viz =  OvercookedVisualizer()
-    # viz.animate(rollout_state_seq, env.agent_view_size, filename=f'./out/{JOB_ID}/fcp-animation.gif')
+    rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
+    rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
+    rollout_team_fcp_agents = [make_ppo_agent, ]
+    rollout_load_step = config["_CHECKPOINT_STEPS"][-1]
+    rollout_state_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_load_step, max_steps=300)
+    env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
+    viz =  OvercookedVisualizer()
+    viz.animate(rollout_state_seq, env.agent_view_size, filename=f'./out/{JOB_ID}/fcp-animation.gif')
 
     return None
 
