@@ -413,12 +413,15 @@ def main():
         viz.animate(rollout_state_seq, env.agent_view_size, filename=os.path.join(__animation_dir, f"animation__{agents_file_string}.gif"))
         
     for team_ix in range(len(team_reward_matrices)):
+        labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for prefix, ckpt in lst_team_checkpoints[team_ix] ]
         fig, ax = plt.subplots()
         ax.matshow(team_reward_matrices[team_ix], cmap=plt.cm.Blues)
         for i in range(team_reward_matrices[team_ix].shape[0]):
             for j in range(team_reward_matrices[team_ix].shape[1]):
                 c = team_reward_matrices[team_ix][i,j]
                 ax.text(i, j, str(c), va='center', ha='center')
+        ax.set_xticklabels(['']+labels)
+        ax.set_yticklabels(['']+labels)
         fig.savefig(os.path.join(ROOT_DIR, f"cumulative-reward_team-{team_ix}.png"))
         plt.close(fig)
 
@@ -428,6 +431,8 @@ def main():
             for j in range(team_delivered_matrices[team_ix].shape[1]):
                 c = team_delivered_matrices[team_ix][i,j]
                 ax.text(i, j, str(c), va='center', ha='center')
+        ax.set_xticklabels(['']+labels)
+        ax.set_yticklabels(['']+labels)
         fig.savefig(os.path.join(ROOT_DIR, f"delivered-dishes_team-{team_ix}.png"))
         plt.close(fig)
    
