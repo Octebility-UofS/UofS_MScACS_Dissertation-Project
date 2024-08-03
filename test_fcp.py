@@ -1,3 +1,4 @@
+from itertools import permutations
 import os
 # Recommended XLA flags for improving gpu performance
 # https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags
@@ -11,6 +12,8 @@ import os
 #os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']= 'false'
 
 import sys
+
+from ficticious_coplay.util.util import nary_sequences
 JOB_ID = "0"
 if len(sys.argv) > 1:
     JOB_ID = sys.argv[1]
@@ -40,6 +43,7 @@ from flax.training.train_state import TrainState
 import jaxmarl
 from jaxmarl.environments.overcooked import overcooked_layouts
 from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
+from jaxmarl.environments.overcooked.overcooked import DELIVERY_REWARD
 import optax
 import matplotlib.pyplot as plt
 
@@ -272,9 +276,9 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 1e5,
-        "NUM_UPDATES": 1e4,
-        "NUM_MINIBATCHES": 10,
+        "ENV_STEPS": 1e1,
+        "NUM_UPDATES": 1e2,
+        "NUM_MINIBATCHES": 1,
         "NUM_EPISODES": 1,
         "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
@@ -301,8 +305,8 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 50, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 2, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
@@ -311,9 +315,10 @@ def main():
     stop_time = datetime.now()
     print(f"Stage 1 Elapsed {stop_time-start_time}")
 
-    __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
-    os.makedirs(__profile_dir, exist_ok=True)
-    jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
+    # Turn off Memory profiling in favour of performance
+    # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
+    # os.makedirs(__profile_dir, exist_ok=True)
+    # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
 
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
@@ -342,9 +347,10 @@ def main():
     stop_time = datetime.now()
     print(f"Stage 2 Elapsed {stop_time-start_time}")
 
-    __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
-    os.makedirs(__profile_dir, exist_ok=True)
-    jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
+    # Turn off Memory profiling in favour of performance
+    # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
+    # os.makedirs(__profile_dir, exist_ok=True)
+    # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     for team_ix, team_metrics in s2_episode_metrics.items():
@@ -356,14 +362,75 @@ def main():
     plt.close()
 
 
+
+
+
     rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
     rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
     rollout_team_fcp_agents = [make_ppo_agent, ]
-    rollout_load_step = config["_CHECKPOINT_STEPS"][-1]
-    rollout_state_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_load_step, max_steps=300)
-    env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
-    viz =  OvercookedVisualizer()
-    viz.animate(rollout_state_seq, env.agent_view_size, filename=f'./out/{JOB_ID}/fcp-animation.gif')
+    team_permutations = []
+    team_reward_matrices = []
+    team_delivered_matrices = []
+    lst_team_checkpoints = []
+    for team_ix, team_spec in enumerate(rollout_teams):
+        team_checkpoints = []
+        if team_fcp_agents[team_ix]:
+            team_checkpoints.append( (f"fcp-{team_ix}_", load_steps[-1]) )
+        for agent_ix in range(teams[team_ix].agent_count):
+            for load_step in load_steps:
+                team_checkpoints.append( (f"{team_ix}-{agent_ix}_", load_step) )
+        team_reward_matrices.append(np.zeros((len(team_checkpoints), len(team_checkpoints))))
+        team_delivered_matrices.append(np.zeros((len(team_checkpoints), len(team_checkpoints))))
+        lst_team_checkpoints.append(team_checkpoints)
+        team_permutations.append(list(permutations(team_checkpoints, len(rollout_teams[team_ix].agent_uids))))
+    rollout_permutations = nary_sequences(*team_permutations)
+    __animation_dir = os.path.join(ROOT_DIR, 'animations')
+    os.makedirs(__animation_dir, exist_ok=True)
+    for rollout_permutation in rollout_permutations:
+        rollout_state_seq, rollout_reward_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_permutation, max_steps=300)
+        cumulative_reward = 0
+        delivered_dishes = 0
+        DELIVERY_REWARD
+        for seq_reward in rollout_reward_seq:
+            cumulative_reward += sum(jnp.sum(v) for v in seq_reward.values())
+            for v in seq_reward.values():
+                if jnp.isclose(jnp.sum(v), DELIVERY_REWARD):
+                    delivered_dishes += 1
+        # Record reward values in appropriate matrices
+        for team_ix, team_permutation in enumerate(rollout_permutation):
+            # We know there's only two agents at the moment so let's be lazy
+            a0, a1 = team_permutation[0], team_permutation[1]
+            ix_a0 = lst_team_checkpoints[team_ix].index(a0)
+            ix_a1 = lst_team_checkpoints[team_ix].index(a1)
+            team_reward_matrices[team_ix][ix_a0, ix_a1] = cumulative_reward
+            team_reward_matrices[team_ix][ix_a1, ix_a0] = cumulative_reward
+            team_delivered_matrices[team_ix][ix_a0, ix_a1] = delivered_dishes
+            team_delivered_matrices[team_ix][ix_a1, ix_a0] = delivered_dishes
+                    
+        env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
+        viz =  OvercookedVisualizer()
+        agents_file_string = "__".join([ f"{p[0]}{p[1]}" for team_p in rollout_permutation for p in team_p ])
+        viz.animate(rollout_state_seq, env.agent_view_size, filename=os.path.join(__animation_dir, f"animation__{agents_file_string}.gif"))
+        
+    for team_ix in range(len(team_reward_matrices)):
+        fig, ax = plt.subplots()
+        ax.matshow(team_reward_matrices[team_ix], cmap=plt.cm.Blues)
+        for i in range(team_reward_matrices[team_ix].shape[0]):
+            for j in range(team_reward_matrices[team_ix].shape[1]):
+                c = team_reward_matrices[team_ix][i,j]
+                ax.text(i, j, str(c), va='center', ha='center')
+        fig.savefig(os.path.join(ROOT_DIR, f"cumulative-reward_team-{team_ix}.png"))
+        plt.close(fig)
+
+        fig, ax = plt.subplots()
+        ax.matshow(team_delivered_matrices[team_ix], cmap=plt.cm.Blues)
+        for i in range(team_delivered_matrices[team_ix].shape[0]):
+            for j in range(team_delivered_matrices[team_ix].shape[1]):
+                c = team_delivered_matrices[team_ix][i,j]
+                ax.text(i, j, str(c), va='center', ha='center')
+        fig.savefig(os.path.join(ROOT_DIR, f"delivered-dishes_team-{team_ix}.png"))
+        plt.close(fig)
+   
 
     return None
 

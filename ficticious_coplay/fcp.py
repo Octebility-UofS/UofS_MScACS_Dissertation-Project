@@ -257,7 +257,7 @@ def _make_episode(
     return _episode
 
 
-def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_agents, rollout_load_step, max_steps=200):
+def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_agents, rollout_load_config, max_steps=200):
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
     max_steps = min(max_steps, env.max_steps)
 
@@ -274,30 +274,19 @@ def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_
 
     partners = []
     partner_states = []
-    for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
+    for team_ix, team_config in enumerate(rollout_load_config):
         team_partners = []
         team_partner_states = []
-        for count in range(partner_count):
-            if count == 0 and team_fcp_agents[team_ix]:
-                rng, _rng = jax.random.split(rng)
-                fcp_prefix = f"fcp-{team_ix}_"
-                partner, init_partner_state = team_fcp_agents[team_ix](
-                    _rng, config, env_spec, teams[team_ix], env,
-                    fcp_prefix
-                    )
-                loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
-                team_partner_states.append(loaded_partner_state)
-                team_partners.append(partner)
-            else:
-                rng, _rng = jax.random.split(rng)
-                checkpoint_prefix = f"{team_ix}-{count}_"
-                partner, init_partner_state = cls_SelfPlayAgent(
-                    _rng, config, env_spec, teams[team_ix], env,
-                    checkpoint_prefix
-                    )
-                loaded_partner_state, _, _ = partner.load(init_partner_state, rollout_load_step)
-                team_partner_states.append(loaded_partner_state)
-                team_partners.append(partner)
+        for partner_prefix, checkpoint_step in team_config:
+            rng, _rng = jax.random.split(rng)
+            load_cls = team_fcp_agents[team_ix] if partner_prefix.startswith("fcp-") else team_specs[team_ix].agent_class
+            partner, init_partner_state = load_cls(
+                _rng, config, env_spec, teams[team_ix], env,
+                partner_prefix
+                )
+            loaded_partner_state, _, _ = partner.load(init_partner_state, checkpoint_step)
+            team_partner_states.append(loaded_partner_state)
+            team_partners.append(partner)
         partners.append(team_partners)
         partner_states.append(team_partner_states)
 
@@ -383,7 +372,7 @@ def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_
 
         # Collect new runner state and record state
         runner_state = updated_env_obsv_state, updated_partner_states, rng
-        return runner_state, new_env_state
+        return runner_state, (new_env_state, reward)
 
 
     rng, _rng = jax.random.split(rng)
@@ -391,17 +380,20 @@ def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_
     obs, state = jax.vmap(env.reset, in_axes=(0, ))(rng_reset)
 
     state_seq = [state, ]
+    reward_seq = [{}, ]
     runner_state = (obs, state), partner_states, rng
-    _, env_states = jax.lax.scan(
+    _, (env_states, rewards) = jax.lax.scan(
         _runner_rollout,
         runner_state, None,
         length=max_steps
     )
     # Unbatchify the states since they're currently of shape [1, :]
     state_seq += [ jax.tree_map(lambda x: x[i], env_states) for i in range(max_steps) ]
+    reward_seq += [ jax.tree_map(lambda x: x[i], rewards) for i in range(max_steps) ]
     unbatched_state_seq = [ jax.tree_map(lambda x: x[0], state) for state in state_seq ]
+    unbatched_reward_seq = [ jax.tree_map(lambda x: x[0], reward) for reward in reward_seq ]
 
-    return unbatched_state_seq
+    return unbatched_state_seq, unbatched_reward_seq
 
 
 
