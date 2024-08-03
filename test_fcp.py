@@ -276,9 +276,9 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 1e1,
+        "ENV_STEPS": 1e3,
         "NUM_UPDATES": 1e2,
-        "NUM_MINIBATCHES": 1,
+        "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,
         "ANNEAL_LR": True,
         "MAX_GRAD_NORM": 0.5,
@@ -305,8 +305,8 @@ def main():
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 50, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 2, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
+    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
 
     rng, _rng = jax.random.split(rng)
     stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
