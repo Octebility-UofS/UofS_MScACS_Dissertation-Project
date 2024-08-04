@@ -14,6 +14,8 @@ module list
 echo "JOB ID: $SLURM_JOB_ID"
 
 source activate env_dissertation_project
+which python
+python -V
 
 script=$1
 shift
