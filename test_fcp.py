@@ -13,20 +13,21 @@ import os
 
 import sys
 
+import hydra
+from omegaconf import OmegaConf
+
 from ficticious_coplay.util.util import nary_sequences
 JOB_ID = "0"
-if len(sys.argv) > 1:
-    JOB_ID = sys.argv[1]
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        JOB_ID = sys.argv.pop(1)
+        sys.argv.append(f'hydra.run.dir=out/{JOB_ID}/hydra')
 ROOT_DIR = os.path.join('.', 'out', JOB_ID)
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 import jax
-# Cheap way of detecting whether this was called from my slurm job
-#if len(sys.argv) > 1:
-#    # Recommended for Slurm environment
-#    jax.distributed.initialize()
 
 from datetime import datetime
 
@@ -272,44 +273,37 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     ), init_agent_state
 
 
+@hydra.main(version_base=None, config_path="config", config_name="test_fcp")
+def main(config):
+    config = OmegaConf.to_container(config)
 
-def main():
-    config = {
-        "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 1e4,
-        "NUM_UPDATES": 1e4,
-        "NUM_MINIBATCHES": 10,
-        "NUM_EPISODES": 1,
-        "ANNEAL_LR": True,
-        "MAX_GRAD_NORM": 0.5,
-        "LR": 2.5e-4,
-        "GAMMA": 0.99,
-        "GAE_LAMBDA": 0.95,
-        "CLIP_EPS": 0.2,
-        "ENT_COEF": 0.01,
-        "VF_COEF": 0.5,
-        # "NUM_ENVS": 3, # 200
-        # "NUM_AGENTS": 3, # 32
-        # "NUM_STEPS": 25
-    }
     config["_CHECKPOINT_STEPS"] = list(np.linspace(
         0,
         (config["NUM_UPDATES"] * config["NUM_EPISODES"]) - 1,
         num=config["NUM_CHECKPOINTS"],
         endpoint=True,
         dtype=np.int32
-        ))
+        ))    
 
-    rng = jax.random.PRNGKey(0)
-    numpy_seed = 0
+    rng = jax.random.PRNGKey(config["JAX_SEED"])
 
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
-    env_spec = EnvSpec("overcooked", 200, {"layout" : overcooked_layouts["cramped_room"]})
-    teams = [ TeamSpec(make_ppo_agent, 8, ['agent_0', 'agent_1']), ]
+    env_spec = EnvSpec(
+        config["ENV"]["ID"],
+        config["ENV"]["COUNT"],
+        {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
+    )
+    teams = []
+    for team_config in config["TEAMS"]:
+        teams.append(TeamSpec(
+            globals().get(team_config["CLS_AGENT"]),
+            team_config["AGENT_COUNT"],
+            team_config["AGENT_IDS"]
+        ))
 
     rng, _rng = jax.random.split(rng)
-    stage_1_jit = FCP.make_stage_1( config, env_spec, teams, numpy_seed)
+    stage_1_jit = FCP.make_stage_1( config, env_spec, teams, config["NUMPY_SEED"])
     start_time = datetime.now()
     s1_episode_metrics, s1_last_episode_runner_state = stage_1_jit(_rng)
     stop_time = datetime.now()
@@ -334,13 +328,13 @@ def main():
 
     saved_steps = config["_CHECKPOINT_STEPS"]
     load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
-    team_fcp_agents = [make_ppo_agent, ]
+    team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
     rng, _rng = jax.random.split(rng)
     stage_2_jit = FCP.make_stage_2(
         config, env_spec, teams,
         team_fcp_agents,
         load_steps,
-        numpy_seed
+        config["NUMPY_SEED"]
         )
     start_time = datetime.now()
     s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
@@ -365,9 +359,19 @@ def main():
 
 
 
-    rollout_env_spec = EnvSpec("overcooked", 1, {"layout" : overcooked_layouts["cramped_room"]})
-    rollout_teams = [ TeamSpec(make_ppo_agent, 1, ['agent_0', 'agent_1']), ]
-    rollout_team_fcp_agents = [make_ppo_agent, ]
+    rollout_env_spec = EnvSpec(
+        config["ENV"]["ID"],
+        1,
+        {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
+    )
+    rollout_teams = []
+    for team_config in config["TEAMS"]:
+        rollout_teams.append(TeamSpec(
+            globals().get(team_config["CLS_AGENT"]),
+            1,
+            team_config["AGENT_IDS"]
+        ))
+    rollout_team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
     team_permutations = []
     team_reward_matrices = []
     team_delivered_matrices = []
@@ -386,7 +390,11 @@ def main():
     rollout_permutations = nary_sequences(*team_permutations)
     __animation_dir = os.path.join(ROOT_DIR, 'animations')
     os.makedirs(__animation_dir, exist_ok=True)
+    counter = 0
     for rollout_permutation in rollout_permutations:
+        if counter > 4:
+            break
+        counter += 1
         rollout_state_seq, rollout_reward_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_permutation, max_steps=300)
         cumulative_reward = 0
         delivered_dishes = 0
@@ -420,8 +428,8 @@ def main():
             for j in range(team_reward_matrices[team_ix].shape[1]):
                 c = team_reward_matrices[team_ix][i,j]
                 ax.text(i, j, str(c), va='center', ha='center')
-        ax.set_xticklabels(['']+labels)
-        ax.set_yticklabels(['']+labels)
+        ax.set_xticks(np.arange(len(labels)), labels=labels)
+        ax.set_yticks(np.arange(len(labels)), labels=labels)
         fig.savefig(os.path.join(ROOT_DIR, f"cumulative-reward_team-{team_ix}.png"))
         plt.close(fig)
 
@@ -431,8 +439,8 @@ def main():
             for j in range(team_delivered_matrices[team_ix].shape[1]):
                 c = team_delivered_matrices[team_ix][i,j]
                 ax.text(i, j, str(c), va='center', ha='center')
-        ax.set_xticklabels(['']+labels)
-        ax.set_yticklabels(['']+labels)
+        ax.set_xticks(np.arange(len(labels)), labels=labels)
+        ax.set_yticks(np.arange(len(labels)), labels=labels)
         fig.savefig(os.path.join(ROOT_DIR, f"delivered-dishes_team-{team_ix}.png"))
         plt.close(fig)
    

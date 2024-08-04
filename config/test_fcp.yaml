@@ -1,0 +1,31 @@
+"JAX_SEED": 0
+"NUMPY_SEED": 0
+
+"NUM_EPISODES": 1
+"ENV_STEPS": 1e1
+"NUM_UPDATES": 1e2
+"NUM_MINIBATCHES": 1
+"NUM_CHECKPOINTS": 100
+
+"ANNEAL_LR": True
+"MAX_GRAD_NORM": 0.5
+"LR": 2.5e-4
+"GAMMA": 0.99
+"GAE_LAMBDA": 0.95
+"CLIP_EPS": 0.2
+"ENT_COEF": 0.01
+"VF_COEF": 0.5
+
+"ENV":
+  "ID": "overcooked"
+  "COUNT": 50
+  "KWARGS":
+    "layout": "cramped_room"
+
+"TEAMS":
+  - "CLS_AGENT": "make_ppo_agent"
+    "AGENT_COUNT": 8
+    "AGENT_IDS": ["agent_0", "agent_1"]
+
+"FCP_AGENTS":
+  - "make_ppo_agent"
