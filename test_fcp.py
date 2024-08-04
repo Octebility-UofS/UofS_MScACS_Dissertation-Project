@@ -276,8 +276,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 3e3,
-        "NUM_UPDATES": 1e2,
+        "ENV_STEPS": 1e4,
+        "NUM_UPDATES": 1e4,
         "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,
         "ANNEAL_LR": True,
