@@ -386,12 +386,7 @@ def main():
     rollout_permutations = nary_sequences(*team_permutations)
     __animation_dir = os.path.join(ROOT_DIR, 'animations')
     os.makedirs(__animation_dir, exist_ok=True)
-    # TODO get rid of this again
-    counter = 0
     for rollout_permutation in rollout_permutations:
-        if counter > 10:
-            break
-        counter += 1
         rollout_state_seq, rollout_reward_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_permutation, max_steps=300)
         cumulative_reward = 0
         delivered_dishes = 0
