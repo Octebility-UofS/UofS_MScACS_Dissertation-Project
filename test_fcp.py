@@ -276,7 +276,7 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 def main():
     config = {
         "NUM_CHECKPOINTS": 100,
-        "ENV_STEPS": 1e4,
+        "ENV_STEPS": 3e3,
         "NUM_UPDATES": 1e2,
         "NUM_MINIBATCHES": 10,
         "NUM_EPISODES": 1,
@@ -419,7 +419,7 @@ def main():
         
     for team_ix in range(len(team_reward_matrices)):
         labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for prefix, ckpt in lst_team_checkpoints[team_ix] ]
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=[30, 30])
         ax.matshow(team_reward_matrices[team_ix], cmap=plt.cm.Blues)
         for i in range(team_reward_matrices[team_ix].shape[0]):
             for j in range(team_reward_matrices[team_ix].shape[1]):
@@ -430,7 +430,7 @@ def main():
         fig.savefig(os.path.join(ROOT_DIR, f"cumulative-reward_team-{team_ix}.png"))
         plt.close(fig)
 
-        fig, ax = plt.subplots()
+        fig, ax = plt.subplots(figsize=[30, 30])
         ax.matshow(team_delivered_matrices[team_ix], cmap=plt.cm.Blues)
         for i in range(team_delivered_matrices[team_ix].shape[0]):
             for j in range(team_delivered_matrices[team_ix].shape[1]):
