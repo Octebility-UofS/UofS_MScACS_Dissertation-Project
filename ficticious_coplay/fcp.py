@@ -696,7 +696,6 @@ class FCP:
     @staticmethod
     def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed:int):
         return _make_stage_1(config, env_spec, teams, numpy_seed)
-        return jax.jit(_make_stage_1(config, env_spec, teams, numpy_seed))
 
     @staticmethod
     def make_stage_2(
@@ -707,4 +706,3 @@ class FCP:
         numpy_seed: int
         ):
         return _make_stage_2(config, env_spec, teams, cls_team_fcp_agents, checkpoint_load_steps, numpy_seed)
-        return jax.jit(_make_stage_2(config, env_spec, teams, cls_team_fcp_agents, checkpoint_load_steps, numpy_seed))
