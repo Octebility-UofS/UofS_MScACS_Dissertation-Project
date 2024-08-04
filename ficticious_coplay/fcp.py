@@ -1,11 +1,6 @@
-from collections import OrderedDict
-from copy import deepcopy
 from functools import partial
-import os
-import pickle
-from typing import Any, Callable, NamedTuple, Sequence, Type
+from typing import Any, Callable, NamedTuple
 
-import flax.linen as nn
 import jax
 import jax.experimental
 import jax.numpy as jnp

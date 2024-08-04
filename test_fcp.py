@@ -48,7 +48,7 @@ from jaxmarl.environments.overcooked.overcooked import DELIVERY_REWARD
 import optax
 import matplotlib.pyplot as plt
 
-from ficticious_coplay.fcp import FCP, EnvSpec, SelfPlayAgent, TeamSpec, _make_stage_2, get_rollout
+from ficticious_coplay.fcp import FCP, EnvSpec, SelfPlayAgent, TeamSpec, get_rollout
 
 
 class SimpleNetwork(nn.Module):
