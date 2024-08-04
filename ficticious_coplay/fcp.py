@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, NamedTuple, Union
 
 import jax
 import jax.experimental
@@ -493,7 +493,7 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
 def _make_stage_2(
     config,
     env_spec: EnvSpec, team_specs: list[TeamSpec],
-    cls_team_fcp_agents: list[None|Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']],
+    cls_team_fcp_agents: list[Union[None,Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']]],
     checkpoint_load_steps: list[int],
     numpy_seed: int
     ):
@@ -702,7 +702,7 @@ class FCP:
     def make_stage_2(
         config,
         env_spec: EnvSpec, teams: list[TeamSpec],
-        cls_team_fcp_agents: list[None|Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']],
+        cls_team_fcp_agents: list[Union[None,Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any, Any], 'SelfPlayAgent']]],
         checkpoint_load_steps: list[int],
         numpy_seed: int
         ):
