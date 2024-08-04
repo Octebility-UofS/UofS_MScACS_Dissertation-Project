@@ -190,6 +190,10 @@ def _make_update_step(
     ):
     @jax.jit
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):
+        jax.debug.callback(
+            lambda step: print("{step}".format(step=int(step)), end=" - "),
+            save_counter
+            )
         # Collect Trajectories
         runner_state, trajectories = jax.lax.scan(
             _make_envs_step(

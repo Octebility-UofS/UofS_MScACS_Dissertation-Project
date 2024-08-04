@@ -307,7 +307,7 @@ def main(config):
     start_time = datetime.now()
     s1_episode_metrics, s1_last_episode_runner_state = stage_1_jit(_rng)
     stop_time = datetime.now()
-    print(f"Stage 1 Elapsed {stop_time-start_time}")
+    print(f"\nStage 1 Elapsed {stop_time-start_time}")
 
     # Turn off Memory profiling in favour of performance
     # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
@@ -339,7 +339,7 @@ def main(config):
     start_time = datetime.now()
     s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
     stop_time = datetime.now()
-    print(f"Stage 2 Elapsed {stop_time-start_time}")
+    print(f"\nStage 2 Elapsed {stop_time-start_time}")
 
     # Turn off Memory profiling in favour of performance
     # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
