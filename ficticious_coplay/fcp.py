@@ -11,9 +11,6 @@ import jax.experimental
 import jax.numpy as jnp
 import jaxmarl
 import numpy as np
-from jaxmarl.environments import SimpleReferenceMPE
-import orbax.checkpoint as ocp
-from flax.training import orbax_utils
 
 from ficticious_coplay.util.util import rec_frozenset
 
