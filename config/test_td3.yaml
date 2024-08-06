@@ -1,0 +1,18 @@
+"JAX_SEED": 0
+
+"NUM_UPDATES": 1e2
+"REPLAY_ENV_STEPS": 8e1
+"BATCH_SIZE": 256
+
+
+"NUM_ENVS": 8
+"ENV_NAME": "ant_4x2" 
+"ENV_KWARGS": {}
+
+#TD3 Parameters
+"LR": 3e-4
+"DISCOUNT": 0.99
+"TAU": 0.005
+"POLICY_NOISE": 0.2
+"NOISE_CLIP": 0.5
+"POLICY_FREQ": 2 # Frequency of Delayed policy updates
