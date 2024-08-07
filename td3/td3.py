@@ -91,15 +91,59 @@ def make_td3(rng: jax.dtypes.prng_key, config, env):
         train_state_critic_target
     )
 
+
+def _make_delayed_policy_update(config):
+    def _delayed_policy_update(update_state, batch_traj):
+        rng, train_states, batch_count = update_state
+        state_actor, state_actor_target, state_critic, state_critic_target = train_states
+        done, action, reward, obs, next_obs = batch_traj
+
+        # Compute actor loss
+        # actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
+        def _loss_actor(actor_params, actor_apply_fn, rng, state_critic, obs):
+            # TODO verify that this is actually correct
+            # it might be that both actor AND critic losses are updated here? (but that can't really be)
+            rng, _rng = jax.random.split(rng)
+            act = actor_apply_fn(actor_params, obs).sample(seed=_rng)
+            obs_action = jnp.concatenate([obs, act], axis=1)
+            critic_value_Q1 = state_critic.apply_fn(state_critic.params, obs_action)[0]
+            return -jnp.mean(critic_value_Q1)
+        
+        actor_grad_fn = jax.value_and_grad(_loss_actor)
+        rng, _rng = jax.random.split(rng)
+        actor_loss, actor_grads = actor_grad_fn(state_actor.params, state_actor.apply_fn, _rng, state_critic, obs)
+        state_actor = state_actor.apply_gradients(grads=actor_grads)
+
+        # Update the frozen target models
+        state_critic_target = state_critic_target.replace(params=jax.tree_map(
+            lambda param, target_param: config["TAU"]*param + (1-config["TAU"])*target_param,
+            state_critic.params, state_critic_target.params
+        ))
+        state_actor_target = state_actor_target.replace(params=jax.tree_map(
+            lambda param, target_param: config["TAU"]*param + (1-config["TAU"])*target_param,
+            state_actor.params, state_actor_target.params
+        ))
+
+        train_states = (state_actor, state_actor_target, state_critic, state_critic_target)
+        update_state = rng, train_states, batch_count
+        return update_state, actor_loss
+    return _delayed_policy_update
+
+def _make_actor_critic_policy_update(config):
+    def _policy_update(update_state, batch_traj):
+        pass
+    return _policy_update
+
+
 def _make_td3_update_batch(config):
     def _update_batch(update_state, batch_traj):
         rng, train_states, batch_count = update_state
         state_actor, state_actor_target, state_critic, state_critic_target = train_states
         done, action, reward, obs, next_obs = batch_traj
 
-        # Select action according to policy (actor) (noise is already included??)
+        # Select action according to policy (actor target) (noise is already included??)
         rng, _rng = jax.random.split(rng)
-        next_pi = state_actor.apply_fn(state_actor.params, next_obs)
+        next_pi = state_actor_target.apply_fn(state_actor_target.params, next_obs)
         next_action = next_pi.sample(seed=_rng)
 
         # Compute the target Q value
@@ -123,35 +167,23 @@ def _make_td3_update_batch(config):
         state_critic = state_critic.apply_gradients(grads=critic_grads)
 
         # Perform delayed policy updates
-        if batch_count % config["POLICY_FREQ"] == 0:
-            # Compute actor loss
-            # actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-            def _loss_actor(actor_params, actor_apply_fn, rng, state_critic, obs):
-                # TODO verify that this is actually correct
-                # it might be that both actor AND critic losses are updated here? (but that can't really be)
-                rng, _rng = jax.random.split(rng)
-                act = actor_apply_fn(actor_params, obs).sample(seed=_rng)
-                obs_action = jnp.concatenate([obs, act], axis=1)
-                critic_value_Q1 = state_critic.apply_fn(state_critic.params, obs_action)[0]
-                return -jnp.mean(critic_value_Q1)
-            
-            actor_grad_fn = jax.value_and_grad(_loss_actor)
-            rng, _rng = jax.random.split(rng)
-            actor_loss, actor_grads = actor_grad_fn(state_actor.params, state_actor.apply_fn, _rng, state_critic, obs)
-            state_actor = state_actor.apply_gradients(grads=actor_grads)
+        train_states = (state_actor, state_actor_target, state_critic, state_critic_target)
+        update_state = rng, train_states, batch_count
 
-            # Update the frozen target models
-            state_critic_target = state_critic_target.replace(params=jax.tree_map(
-                lambda param, target_param: config["TAU"]*param + (1-config["TAU"])*target_param,
-                state_critic.params, state_critic_target.params
-            ))
-            state_actor_target = state_actor_target.replace(params=jax.tree_map(
-                lambda param, target_param: config["TAU"]*param + (1-config["TAU"])*target_param,
-                state_actor.params, state_actor_target.params
-            ))
+        update_state, actor_loss = jax.lax.cond(
+            batch_count % config["POLICY_FREQ"] == 0,
+            _make_delayed_policy_update(config),
+            lambda updt_state, traj: (updt_state, jnp.nan),
+            update_state, batch_traj
+        )
+        
+
+        rng, train_states, batch_count = update_state
+        state_actor, state_actor_target, state_critic, state_critic_target = train_states
 
         loss_info = {
-            "critic_loss": critic_loss
+            "critic_loss": critic_loss,
+            "actor_loss": actor_loss
         }
 
         train_states = (state_actor, state_actor_target, state_critic, state_critic_target)
@@ -187,6 +219,9 @@ def make_td3_update(config):
             _make_td3_update_batch(config),
             update_state, batches
         )
+
+        _rng, train_states, batch_count = update_state
+        return train_states, loss_info
     return _td3_update
 
 # def make_actor_critic(
