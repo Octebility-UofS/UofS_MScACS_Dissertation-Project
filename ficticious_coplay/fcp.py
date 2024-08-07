@@ -181,11 +181,9 @@ def _make_update_step(
     partners: list[list[SelfPlayAgent]]
     ):
     @jax.jit
-    def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):
-        jax.debug.callback(
-            lambda step: print("{step}".format(step=int(step)), end=" - "),
-            save_counter
-            )
+    def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):        
+        metrics = {}
+
         # Collect Trajectories
         runner_state, trajectories = jax.lax.scan(
             _make_envs_step(
@@ -196,18 +194,25 @@ def _make_update_step(
             length=config["ENV_STEPS"]
         )
 
+        # Log the reward for each agent policy
+        metrics["reward"] = {}
+        for team_ix, team_partners in enumerate(partners):
+            metrics["reward"][team_ix] = {}
+            for p_ix, partner in enumerate(team_partners):
+                metrics["reward"][team_ix][p_ix] = trajectories[team_ix][p_ix].reward# jnp.mean(trajectories[team_ix][p_ix].reward)
+
 
         # Update each agent given their trajectories
-        metrics = {}
+        metrics["update_metrics"] = {}
         env_obsv_state, partner_states, rng = runner_state
         updated_partner_states = []
         for team_ix, team_partners in enumerate(partners):
-            metrics[team_ix] = {}
+            metrics["update_metrics"][team_ix] = {}
             team_updated_partner_states = []
             for p_ix, partner in enumerate(team_partners):
                 rng, _rng = jax.random.split(rng)
                 updated_partner_state, update_metrics = partner.update(_rng, trajectories[team_ix][p_ix], partner_states[team_ix][p_ix])
-                metrics[team_ix][p_ix] = update_metrics
+                metrics["update_metrics"][team_ix][p_ix] = update_metrics
                 team_updated_partner_states.append(updated_partner_state)
             updated_partner_states.append(team_updated_partner_states)
 
@@ -482,9 +487,7 @@ def _make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec], numpy_seed: 
             length=config["NUM_EPISODES"]
         )
 
-        unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.mean(jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), axis=-1), episode_metrics)
-
-        return unravelled_episode_metrics, last_episode_runner_state
+        return episode_metrics, last_episode_runner_state
 
     return _stage_1
 

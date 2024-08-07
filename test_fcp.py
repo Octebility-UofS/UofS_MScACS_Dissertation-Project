@@ -1,3 +1,4 @@
+
 from itertools import permutations
 import os
 # Recommended XLA flags for improving gpu performance
@@ -11,25 +12,36 @@ import os
 #)
 #os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']= 'false'
 
+import __main__
 import sys
+from datetime import datetime
+__script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
+__time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+ROOT_DIR = os.path.join('.', 'out', f"{__time}_0_{__script_name}")
+if __name__ == "__main__":
+    if any([ arg.startswith("hydra.run.dir=") for arg in sys.argv ]):
+        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("hydra.run.dir=") ][0]
+        _arg_dirpath = sys.argv.pop(arg_ix).replace("hydra.run.dir=", "")
+        ROOT_DIR = _arg_dirpath + f"_{__script_name}"
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+    elif any([ arg.startswith("JOB_ID=") for arg in sys.argv ]):
+        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ][0]
+        _arg_job_id = sys.argv.pop(arg_ix).replace("JOB_ID=", "")
+        ROOT_DIR = f"{__time}_{_arg_job_id}_{__script_name}"
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+    else:
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+os.makedirs(ROOT_DIR, exist_ok=True)
+CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
+os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 
 import hydra
 from omegaconf import OmegaConf
 
 from ficticious_coplay.util.util import nary_sequences
-JOB_ID = "0"
-if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        JOB_ID = sys.argv.pop(1)
-        sys.argv.append(f'hydra.run.dir=out/{JOB_ID}/hydra')
-ROOT_DIR = os.path.join('.', 'out', JOB_ID)
-os.makedirs(ROOT_DIR, exist_ok=True)
-CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
-os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+
 
 import jax
-
-from datetime import datetime
 
 import pickle
 from typing import Sequence
@@ -314,15 +326,39 @@ def main(config):
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
 
+    flattened_cumulative_reward = jax.tree_map(
+        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
+        s1_episode_metrics["reward"]
+    )
+    for team_ix, team_rewards in flattened_cumulative_reward.items():
+        for p_ix, partner_rewards in team_rewards.items():
+            plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative_mean_reward_per_partner.png"))
+    plt.close()
+
+    flattened_cumulative_dishes = jax.tree_map(
+        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
+        s1_episode_metrics["reward"]
+    )
+    for team_ix, team_dishes in flattened_cumulative_dishes.items():
+        for p_ix, partner_dishes in team_dishes.items():
+            plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative_mean_dishes_per_partner.png"))
+    plt.close()
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
-    for team_ix, team_metrics in s1_episode_metrics.items():
+    flattened_loss = jax.tree_map(
+        (lambda x: x.reshape((total_update_steps, ) + x.shape[2:])),
+        s1_episode_metrics["update_metrics"]
+        )
+    for team_ix, team_metrics in flattened_loss.items():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
     plt.legend()
-    plt.savefig(f"./out/{JOB_ID}/stage-1_loss_per_partner.png")
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss_per_partner.png"))
     plt.close()
-
 
 
 
@@ -346,17 +382,63 @@ def main(config):
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
 
+    flattened_cumulative_reward = jax.tree_map(
+        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
+        s2_episode_metrics["reward"]
+    )
+    for team_ix, team_rewards in flattened_cumulative_reward.items():
+        for p_ix, partner_rewards in team_rewards.items():
+            label = ""
+            if team_fcp_agents[team_ix]:
+                if p_ix == 0:
+                    label = f"{team_ix}-fcp"
+                else:
+                    agent_ix = (p_ix-1)//len(load_steps)
+                    load_step = load_steps[(p_ix-1)%len(load_steps)]
+                    label = f"{team_ix}-{agent_ix}_{load_step}"
+            else:
+                agent_ix = p_ix//len(load_steps)
+                load_step = load_steps[p_ix%len(load_steps)]
+                label = f"{team_ix}-{agent_ix}_{load_step}"
+            plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=label)
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_reward_per_partner.png"))
+    plt.close()
+
+    flattened_cumulative_dishes = jax.tree_map(
+        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
+        s2_episode_metrics["reward"]
+    )
+    for team_ix, team_dishes in flattened_cumulative_dishes.items():
+        for p_ix, partner_dishes in team_dishes.items():
+            label = ""
+            if team_fcp_agents[team_ix]:
+                if p_ix == 0:
+                    label = f"{team_ix}-fcp"
+                else:
+                    agent_ix = (p_ix-1)//len(load_steps)
+                    load_step = load_steps[(p_ix-1)%len(load_steps)]
+                    label = f"{team_ix}-{agent_ix}_{load_step}"
+            else:
+                agent_ix = p_ix//len(load_steps)
+                load_step = load_steps[p_ix%len(load_steps)]
+                label = f"{team_ix}-{agent_ix}_{load_step}"
+            plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=label)
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_dishes_per_partner.png"))
+    plt.close()
+
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
-    for team_ix, team_metrics in s2_episode_metrics.items():
+    for team_ix, team_metrics in s2_episode_metrics["update_metrics"].items():
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}")
     plt.legend()
-    plt.savefig(f"./out/{JOB_ID}/stage-2_loss_per_partner.png")
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss_per_partner.png"))
     plt.close()
 
 
-
+    return
 
 
     rollout_env_spec = EnvSpec(

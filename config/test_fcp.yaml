@@ -2,9 +2,9 @@
 "NUMPY_SEED": 0
 
 "NUM_EPISODES": 1
-"ENV_STEPS": 1e4
-"NUM_UPDATES": 1e5
-"NUM_MINIBATCHES": 10
+"ENV_STEPS": 15
+"NUM_UPDATES": 1e2
+"NUM_MINIBATCHES": 1
 "NUM_CHECKPOINTS": 100
 
 "ANNEAL_LR": True
@@ -18,13 +18,13 @@
 
 "ENV":
   "ID": "overcooked"
-  "COUNT": 200
+  "COUNT": 20
   "KWARGS":
     "layout": "cramped_room"
 
 "TEAMS":
   - "CLS_AGENT": "make_ppo_agent"
-    "AGENT_COUNT": 8
+    "AGENT_COUNT": 3
     "AGENT_IDS": ["agent_0", "agent_1"]
 
 "FCP_AGENTS":

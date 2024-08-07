@@ -18,5 +18,6 @@ which python
 python -V
 
 script=$1
+out_name="${SLURM_JOB_START_TIME}_${$SLURM_JOB_ID}"
 shift
-python $script $SLURM_JOB_ID "$@"
+python $script hydra.run.dir=$out_name "$@"
