@@ -258,12 +258,11 @@ def _make_episode(
     return _episode
 
 
-def get_rollout(config, env_spec: EnvSpec, team_agents: list[list[str]], team_assignments: list[list[tuple[tuple[str, int], Callable]]], max_steps=200):
+def get_rollout(config, rng, env_spec: EnvSpec, team_agents: list[list[str]], team_assignments: list[list[tuple[tuple[str, int], Callable]]], max_steps=200):
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
     max_steps = min(max_steps, env.max_steps)
 
     np_rng = np.random.default_rng(0)
-    rng = jax.random.PRNGKey(0)
 
     partners = []
     partner_states = []
