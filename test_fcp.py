@@ -1,5 +1,5 @@
 
-from itertools import permutations
+from itertools import combinations, permutations
 import os
 # Recommended XLA flags for improving gpu performance
 # https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags
@@ -388,19 +388,13 @@ def main(config):
     )
     for team_ix, team_rewards in flattened_cumulative_reward.items():
         for p_ix, partner_rewards in team_rewards.items():
+            alpha=0.2
             label = ""
             if team_fcp_agents[team_ix]:
                 if p_ix == 0:
                     label = f"{team_ix}-fcp"
-                else:
-                    agent_ix = (p_ix-1)//len(load_steps)
-                    load_step = load_steps[(p_ix-1)%len(load_steps)]
-                    label = f"{team_ix}-{agent_ix}_{load_step}"
-            else:
-                agent_ix = p_ix//len(load_steps)
-                load_step = load_steps[p_ix%len(load_steps)]
-                label = f"{team_ix}-{agent_ix}_{load_step}"
-            plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=label)
+                    alpha=1
+            plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=label, alpha=alpha)
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_reward_per_partner.png"))
     plt.close()
@@ -411,34 +405,33 @@ def main(config):
     )
     for team_ix, team_dishes in flattened_cumulative_dishes.items():
         for p_ix, partner_dishes in team_dishes.items():
+            alpha=0.2
             label = ""
             if team_fcp_agents[team_ix]:
                 if p_ix == 0:
                     label = f"{team_ix}-fcp"
-                else:
-                    agent_ix = (p_ix-1)//len(load_steps)
-                    load_step = load_steps[(p_ix-1)%len(load_steps)]
-                    label = f"{team_ix}-{agent_ix}_{load_step}"
-            else:
-                agent_ix = p_ix//len(load_steps)
-                load_step = load_steps[p_ix%len(load_steps)]
-                label = f"{team_ix}-{agent_ix}_{load_step}"
-            plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=label)
+                    alpha=1
+            plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=label, alpha=alpha)
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_dishes_per_partner.png"))
     plt.close()
 
+
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
-    for team_ix, team_metrics in s2_episode_metrics["update_metrics"].items():
+    flattened_loss = jax.tree_map(
+        (lambda x: x.reshape((total_update_steps, ) + x.shape[2:])),
+        s1_episode_metrics["update_metrics"]
+        )
+    for team_ix, team_metrics in flattened_loss.items():
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
-            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}")
+            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss_per_partner.png"))
     plt.close()
 
 
-    return
+
 
 
     rollout_env_spec = EnvSpec(
@@ -447,82 +440,69 @@ def main(config):
         {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
     )
     rollout_teams = []
-    for team_config in config["TEAMS"]:
-        rollout_teams.append(TeamSpec(
-            globals().get(team_config["CLS_AGENT"]),
-            1,
-            team_config["AGENT_IDS"]
-        ))
-    rollout_team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
-    team_permutations = []
-    team_reward_matrices = []
-    team_delivered_matrices = []
-    lst_team_checkpoints = []
-    for team_ix, team_spec in enumerate(rollout_teams):
-        team_checkpoints = []
+    team_agents = []
+    for team_ix, team_spec in enumerate(teams):
+        rollout_teams.append([])
+        team_agents.append(team_spec.agent_uids)
         if team_fcp_agents[team_ix]:
-            team_checkpoints.append( (f"fcp-{team_ix}_", load_steps[-1]) )
-        for agent_ix in range(teams[team_ix].agent_count):
+            rollout_teams[team_ix].append( ((f"fcp-{team_ix}_", load_steps[-1]), team_fcp_agents[team_ix]) )
+        for p_ix in range(team_spec.agent_count):
             for load_step in load_steps:
-                team_checkpoints.append( (f"{team_ix}-{agent_ix}_", load_step) )
-        team_reward_matrices.append(np.zeros((len(team_checkpoints), len(team_checkpoints))))
-        team_delivered_matrices.append(np.zeros((len(team_checkpoints), len(team_checkpoints))))
-        lst_team_checkpoints.append(team_checkpoints)
-        team_permutations.append(list(permutations(team_checkpoints, len(rollout_teams[team_ix].agent_uids))))
+                rollout_teams[team_ix].append( ((f"{team_ix}-{p_ix}_", load_step), team_spec.agent_class) )
+    team_permutations = []
+    for rollout_team in rollout_teams:
+        # TODO Once again we're being lazy by assuming that we only have 2 agents
+        # Add diagonals (e.g. fcp vs fcp)
+        team_permutations.append(
+            list(permutations(rollout_team, len(team_spec.agent_uids)))
+            + [ (t, t) for t in rollout_team ]
+            )
+
     rollout_permutations = nary_sequences(*team_permutations)
-    __animation_dir = os.path.join(ROOT_DIR, 'animations')
-    os.makedirs(__animation_dir, exist_ok=True)
+    rollout_reward_matrices = []
+    rollout_dishes_matrices = []
+    for rollout_team in rollout_teams:
+        rollout_reward_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
+        rollout_dishes_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
+
+    max_rollout_steps = 12
     for rollout_permutation in rollout_permutations:
-        rollout_state_seq, rollout_reward_seq = get_rollout(config, rollout_env_spec, rollout_teams, rollout_team_fcp_agents, rollout_permutation, max_steps=300)
-        cumulative_reward = 0
-        delivered_dishes = 0
-        DELIVERY_REWARD
-        for seq_reward in rollout_reward_seq:
-            cumulative_reward += sum(jnp.sum(v) for v in seq_reward.values())
-            for v in seq_reward.values():
-                if jnp.isclose(jnp.sum(v), DELIVERY_REWARD):
-                    delivered_dishes += 1
-        # Record reward values in appropriate matrices
+        seq_envs_states, seq_envs_rewards = get_rollout(config, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
+        cumulative_reward_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
+        delivered_dishes_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.isclose(x, DELIVERY_REWARD)), seq_envs_rewards)
         for team_ix, team_permutation in enumerate(rollout_permutation):
-            # We know there's only two agents at the moment so let's be lazy
+            # TODO we're being lazy here because we know the current overcooked environment has only 2 agents
             a0, a1 = team_permutation[0], team_permutation[1]
-            ix_a0 = lst_team_checkpoints[team_ix].index(a0)
-            ix_a1 = lst_team_checkpoints[team_ix].index(a1)
-            team_reward_matrices[team_ix][ix_a0, ix_a1] = cumulative_reward
-            team_reward_matrices[team_ix][ix_a1, ix_a0] = cumulative_reward
-            team_delivered_matrices[team_ix][ix_a0, ix_a1] = delivered_dishes
-            team_delivered_matrices[team_ix][ix_a1, ix_a0] = delivered_dishes
-                    
-        env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
-        viz =  OvercookedVisualizer()
-        agents_file_string = "__".join([ f"{p[0]}{p[1]}" for team_p in rollout_permutation for p in team_p ])
-        viz.animate(rollout_state_seq, env.agent_view_size, filename=os.path.join(__animation_dir, f"animation__{agents_file_string}.gif"))
-        
-    for team_ix in range(len(team_reward_matrices)):
-        labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for prefix, ckpt in lst_team_checkpoints[team_ix] ]
+            ix_a0 = rollout_teams[team_ix].index(a0)
+            ix_a1 = rollout_teams[team_ix].index(a1)
+            rollout_reward_matrices[team_ix][ix_a0, ix_a1] = cumulative_reward_per_agent["agent_0"]+cumulative_reward_per_agent["agent_1"]
+            rollout_dishes_matrices[team_ix][ix_a0, ix_a1] = delivered_dishes_per_agent["agent_0"]+delivered_dishes_per_agent["agent_1"]
+
+    for team_ix in range(len(rollout_reward_matrices)):
+        labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for (prefix, ckpt), _ in rollout_teams[team_ix] ]
         fig, ax = plt.subplots(figsize=[30, 30])
-        ax.matshow(team_reward_matrices[team_ix], cmap=plt.cm.Blues)
-        for i in range(team_reward_matrices[team_ix].shape[0]):
-            for j in range(team_reward_matrices[team_ix].shape[1]):
-                c = team_reward_matrices[team_ix][i,j]
+        ax.matshow(rollout_reward_matrices[team_ix], cmap=plt.cm.Blues)
+        for i in range(rollout_reward_matrices[team_ix].shape[0]):
+            for j in range(rollout_reward_matrices[team_ix].shape[1]):
+                c = rollout_reward_matrices[team_ix][i,j]
                 ax.text(i, j, str(c), va='center', ha='center')
         ax.set_xticks(np.arange(len(labels)), labels=labels)
         ax.set_yticks(np.arange(len(labels)), labels=labels)
         fig.savefig(os.path.join(ROOT_DIR, f"cumulative-reward_team-{team_ix}.png"))
         plt.close(fig)
 
+        labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for (prefix, ckpt), _ in rollout_teams[team_ix] ]
         fig, ax = plt.subplots(figsize=[30, 30])
-        ax.matshow(team_delivered_matrices[team_ix], cmap=plt.cm.Blues)
-        for i in range(team_delivered_matrices[team_ix].shape[0]):
-            for j in range(team_delivered_matrices[team_ix].shape[1]):
-                c = team_delivered_matrices[team_ix][i,j]
+        ax.matshow(rollout_reward_matrices[team_ix], cmap=plt.cm.Blues)
+        for i in range(rollout_reward_matrices[team_ix].shape[0]):
+            for j in range(rollout_reward_matrices[team_ix].shape[1]):
+                c = rollout_reward_matrices[team_ix][i,j]
                 ax.text(i, j, str(c), va='center', ha='center')
         ax.set_xticks(np.arange(len(labels)), labels=labels)
         ax.set_yticks(np.arange(len(labels)), labels=labels)
-        fig.savefig(os.path.join(ROOT_DIR, f"delivered-dishes_team-{team_ix}.png"))
+        fig.savefig(os.path.join(ROOT_DIR, f"cumulative-delivered-dishes_team-{team_ix}.png"))
         plt.close(fig)
-   
-
+        
     return None
 
     

@@ -258,46 +258,33 @@ def _make_episode(
     return _episode
 
 
-def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_agents, rollout_load_config, max_steps=200):
+def get_rollout(config, env_spec: EnvSpec, team_agents: list[list[str]], team_assignments: list[list[tuple[tuple[str, int], Callable]]], max_steps=200):
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
     max_steps = min(max_steps, env.max_steps)
 
     np_rng = np.random.default_rng(0)
     rng = jax.random.PRNGKey(0)
 
-    teams = [
-        TeamSpec(
-            spec.agent_class,
-            len(spec.agent_uids),
-            spec.agent_uids
-            ) for spec in team_specs
-    ]
-
     partners = []
     partner_states = []
-    for team_ix, team_config in enumerate(rollout_load_config):
-        team_partners = []
-        team_partner_states = []
-        for partner_prefix, checkpoint_step in team_config:
+    for team_ix, assignment in enumerate(team_assignments):
+        partners.append([])
+        partner_states.append([])
+        for ((p_prefix, p_load_step), p_load_cls) in assignment:
             rng, _rng = jax.random.split(rng)
-            load_cls = team_fcp_agents[team_ix] if partner_prefix.startswith("fcp-") else team_specs[team_ix].agent_class
-            partner, init_partner_state = load_cls(
-                _rng, config, env_spec, teams[team_ix], env,
-                partner_prefix
-                )
-            loaded_partner_state, _, _ = partner.load(init_partner_state, checkpoint_step)
-            team_partner_states.append(loaded_partner_state)
-            team_partners.append(partner)
-        partners.append(team_partners)
-        partner_states.append(team_partner_states)
+            partner, init_partner_state = p_load_cls(
+                _rng, config, env_spec, None, env, # set team_spec[team_ix] to None for now since it doesn't really seem to be used
+                p_prefix
+            )
+            loaded_partner_state, _, _ = partner.load(init_partner_state, p_load_step)
+            partners[team_ix].append(partner)
+            partner_states[team_ix].append(loaded_partner_state)
 
-
-    env_instance_count = 1
+    env_instance_count = env_spec.count
     map_agent_uid_to_partner_instance = dict()
-    for (team_ix, team_spec) in enumerate(teams):
+    for (team_ix, agents) in enumerate(team_agents):
         map_agent_uid_to_partner_instance[team_ix] = dict()
-        partner_count = team_spec.agent_count
-        for p_ix, agent_id in enumerate(team_spec.agent_uids):
+        for p_ix, agent_id in enumerate(agents):
             map_agent_uid_to_partner_instance[team_ix][p_ix] = {agent_id: (0, env_instance_count)}
         # Convert dict of agent id's to slices into a list sorted by agent id
         for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
@@ -306,7 +293,7 @@ def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_
             ]
 
     reverse_map_agent_uid_to_partner_instance = dict()
-    for (team_ix, team_spec) in enumerate(teams):
+    for (team_ix, agents) in enumerate(team_agents):
         reverse_map_agent_uid_to_partner_instance[team_ix] = dict()
         for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
             slice_indexes = np.cumsum([0,] + [ s1 - s0 for agent_id, (s0, s1) in agent_mapping ])
@@ -325,6 +312,7 @@ def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_
     map_agent_uid_to_partner_instance = rec_frozenset(map_agent_uid_to_partner_instance)
     reverse_map_agent_uid_to_partner_instance = rec_frozenset(reverse_map_agent_uid_to_partner_instance)
 
+    @jax.jit
     def _runner_rollout(runner_state, _):
         env_obsv_state, partner_states, rng = runner_state
 
@@ -388,13 +376,21 @@ def get_rollout(config, env_spec: EnvSpec, team_specs: list[TeamSpec], team_fcp_
         runner_state, None,
         length=max_steps
     )
-    # Unbatchify the states since they're currently of shape [1, :]
-    state_seq += [ jax.tree_map(lambda x: x[i], env_states) for i in range(max_steps) ]
-    reward_seq += [ jax.tree_map(lambda x: x[i], rewards) for i in range(max_steps) ]
-    unbatched_state_seq = [ jax.tree_map(lambda x: x[0], state) for state in state_seq ]
-    unbatched_reward_seq = [ jax.tree_map(lambda x: x[0], reward) for reward in reward_seq ]
 
-    return unbatched_state_seq, unbatched_reward_seq
+    # Unbatchify the states since they're currently of shape [1, :]
+    state_seq = []
+    reward_seq = []
+    for step_ix in range(max_steps):
+        state_seq.append(jax.tree_map(
+            lambda x: x[step_ix],
+            env_states
+        ))
+        reward_seq.append(jax.tree_map(
+            lambda x: x[step_ix],
+            rewards
+        ))
+
+    return env_states, rewards
 
 
 
@@ -686,10 +682,8 @@ def _make_stage_2(
             jnp.arange(0, config["NUM_EPISODES"]), # Used to keep track of saved network parameters
             length=config["NUM_EPISODES"]
         )
-
-        unravelled_episode_metrics = jax.tree_util.tree_map(lambda x: jnp.mean(jnp.concatenate([ x[i] for i in range(x.shape[0]) ]), axis=-1), episode_metrics)
         
-        return unravelled_episode_metrics, partners
+        return episode_metrics, partners
 
     return _stage_2
 
