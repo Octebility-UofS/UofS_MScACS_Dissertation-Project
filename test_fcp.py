@@ -285,20 +285,8 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
     ), init_agent_state
 
 
-@hydra.main(version_base=None, config_path="config", config_name="test_fcp")
-def main(config):
-    config = OmegaConf.to_container(config)
 
-    config["_CHECKPOINT_STEPS"] = list(np.linspace(
-        0,
-        (config["NUM_UPDATES"] * config["NUM_EPISODES"]) - 1,
-        num=config["NUM_CHECKPOINTS"],
-        endpoint=True,
-        dtype=np.int32
-        ))    
-
-    rng = jax.random.PRNGKey(config["JAX_SEED"])
-
+def _process_stage_1(config, rng):
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
     env_spec = EnvSpec(
@@ -362,6 +350,20 @@ def main(config):
 
 
 
+
+def _process_stage_2(config, rng):
+    env_spec = EnvSpec(
+        config["ENV"]["ID"],
+        config["ENV"]["COUNT"],
+        {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
+    )
+    teams = []
+    for team_config in config["TEAMS"]:
+        teams.append(TeamSpec(
+            globals().get(team_config["CLS_AGENT"]),
+            team_config["AGENT_COUNT"],
+            team_config["AGENT_IDS"]
+        ))
     saved_steps = config["_CHECKPOINT_STEPS"]
     load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
     team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
@@ -420,7 +422,7 @@ def main(config):
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     flattened_loss = jax.tree_map(
         (lambda x: x.reshape((total_update_steps, ) + x.shape[2:])),
-        s1_episode_metrics["update_metrics"]
+        s2_episode_metrics["update_metrics"]
         )
     for team_ix, team_metrics in flattened_loss.items():
         if team_fcp_agents[team_ix]:
@@ -433,12 +435,41 @@ def main(config):
 
 
 
+def __rollout_permutation(
+        config, rollout_env_spec, team_agents, rollout_teams,
+        rollout_permutation, max_rollout_steps,
+        rollout_reward_matrices, rollout_dishes_matrices
+    ):
+    seq_envs_states, seq_envs_rewards = get_rollout(config, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
+    cumulative_reward_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
+    delivered_dishes_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=1)), seq_envs_rewards)
+    for team_ix, team_permutation in enumerate(rollout_permutation):
+        # TODO we're being lazy here because we know the current overcooked environment has only 2 agents
+        a0, a1 = team_permutation[0], team_permutation[1]
+        ix_a0 = rollout_teams[team_ix].index(a0)
+        ix_a1 = rollout_teams[team_ix].index(a1)
+        rollout_reward_matrices[team_ix][ix_a0, ix_a1] = cumulative_reward_per_agent["agent_0"]+cumulative_reward_per_agent["agent_1"]
+        rollout_dishes_matrices[team_ix][ix_a0, ix_a1] = delivered_dishes_per_agent["agent_0"]+delivered_dishes_per_agent["agent_1"]
 
+def _process_rollout(config, rng):
+    max_rollout_steps = config["ROLLOUT_STEPS"]
+    num_rollout_envs = config["ROLLOUT_NUM_ENVS"]
     rollout_env_spec = EnvSpec(
         config["ENV"]["ID"],
-        1,
+        num_rollout_envs,
         {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
     )
+    teams = []
+    for team_config in config["TEAMS"]:
+        teams.append(TeamSpec(
+            globals().get(team_config["CLS_AGENT"]),
+            team_config["AGENT_COUNT"],
+            team_config["AGENT_IDS"]
+        ))
+    saved_steps = config["_CHECKPOINT_STEPS"]
+    load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
+    team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
+
     rollout_teams = []
     team_agents = []
     for team_ix, team_spec in enumerate(teams):
@@ -465,18 +496,12 @@ def main(config):
         rollout_reward_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
         rollout_dishes_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
 
-    max_rollout_steps = 12
     for rollout_permutation in rollout_permutations:
-        seq_envs_states, seq_envs_rewards = get_rollout(config, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
-        cumulative_reward_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
-        delivered_dishes_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.isclose(x, DELIVERY_REWARD)), seq_envs_rewards)
-        for team_ix, team_permutation in enumerate(rollout_permutation):
-            # TODO we're being lazy here because we know the current overcooked environment has only 2 agents
-            a0, a1 = team_permutation[0], team_permutation[1]
-            ix_a0 = rollout_teams[team_ix].index(a0)
-            ix_a1 = rollout_teams[team_ix].index(a1)
-            rollout_reward_matrices[team_ix][ix_a0, ix_a1] = cumulative_reward_per_agent["agent_0"]+cumulative_reward_per_agent["agent_1"]
-            rollout_dishes_matrices[team_ix][ix_a0, ix_a1] = delivered_dishes_per_agent["agent_0"]+delivered_dishes_per_agent["agent_1"]
+        __rollout_permutation(
+            config, rollout_env_spec, team_agents, rollout_teams,
+            rollout_permutation, max_rollout_steps,
+            rollout_reward_matrices, rollout_dishes_matrices
+            )
 
     for team_ix in range(len(rollout_reward_matrices)):
         labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for (prefix, ckpt), _ in rollout_teams[team_ix] ]
@@ -502,7 +527,35 @@ def main(config):
         ax.set_yticks(np.arange(len(labels)), labels=labels)
         fig.savefig(os.path.join(ROOT_DIR, f"cumulative-delivered-dishes_team-{team_ix}.png"))
         plt.close(fig)
-        
+
+
+
+
+
+@hydra.main(version_base=None, config_path="config", config_name="test_fcp")
+def main(config):
+    config = OmegaConf.to_container(config)
+
+    config["_CHECKPOINT_STEPS"] = list(np.linspace(
+        0,
+        (config["NUM_UPDATES"] * config["NUM_EPISODES"]) - 1,
+        num=config["NUM_CHECKPOINTS"],
+        endpoint=True,
+        dtype=np.int32
+        ))    
+
+    rng = jax.random.PRNGKey(config["JAX_SEED"])
+
+
+    rng, _rng = jax.random.split(rng)
+    _process_stage_1(config, _rng)
+
+    rng, _rng = jax.random.split(rng)
+    _process_stage_2(config, _rng)
+
+    rng, _rng = jax.random.split(rng)
+    _process_rollout(config, _rng)
+
     return None
 
     
