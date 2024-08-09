@@ -364,7 +364,7 @@ def get_rollout(config, rng, env_spec: EnvSpec, team_agents: list[list[str]], te
 
 
     rng, _rng = jax.random.split(rng)
-    rng_reset = jax.random.split(_rng, 1)
+    rng_reset = jax.random.split(_rng, env_spec.count)
     obs, state = jax.vmap(env.reset, in_axes=(0, ))(rng_reset)
 
     state_seq = [state, ]
