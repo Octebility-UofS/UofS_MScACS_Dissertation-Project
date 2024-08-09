@@ -321,6 +321,8 @@ def _process_stage_1(config, rng):
     for team_ix, team_rewards in flattened_cumulative_reward.items():
         for p_ix, partner_rewards in team_rewards.items():
             plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Environment Step")
+    plt.ylabel("Cumulative Mean Reward (mean over environment instances)")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative_mean_reward_per_partner.png"))
     plt.close()
@@ -332,6 +334,8 @@ def _process_stage_1(config, rng):
     for team_ix, team_dishes in flattened_cumulative_dishes.items():
         for p_ix, partner_dishes in team_dishes.items():
             plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Environment Step")
+    plt.ylabel("Cumulative Mean Dishes Delivered (mean over environment instances)")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative_mean_dishes_per_partner.png"))
     plt.close()
@@ -344,6 +348,8 @@ def _process_stage_1(config, rng):
     for team_ix, team_metrics in flattened_loss.items():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Update Step")
+    plt.ylabel("Return")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss_per_partner.png"))
     plt.close()
@@ -397,6 +403,8 @@ def _process_stage_2(config, rng):
                     label = f"{team_ix}-fcp"
                     alpha=1
             plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=label, alpha=alpha)
+    plt.xlabel("Environment Step")
+    plt.ylabel("Cumulative Mean Reward (mean over environment instances)")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_reward_per_partner.png"))
     plt.close()
@@ -414,6 +422,8 @@ def _process_stage_2(config, rng):
                     label = f"{team_ix}-fcp"
                     alpha=1
             plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=label, alpha=alpha)
+    plt.xlabel("Environment Step")
+    plt.ylabel("Cumulative Mean Dishes Delivered (mean over environment instances)")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_dishes_per_partner.png"))
     plt.close()
@@ -428,6 +438,8 @@ def _process_stage_2(config, rng):
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Update Step")
+    plt.ylabel("Return")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss_per_partner.png"))
     plt.close()
