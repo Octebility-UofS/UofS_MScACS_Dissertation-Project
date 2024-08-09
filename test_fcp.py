@@ -34,6 +34,8 @@ if __name__ == "__main__":
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+DATA_DIR = os.path.join(ROOT_DIR, 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
 
 import hydra
 from omegaconf import OmegaConf
@@ -303,55 +305,103 @@ def _process_stage_1(config, rng):
         ))
 
     rng, _rng = jax.random.split(rng)
+    start_time = datetime.now()
     stage_1_jit = FCP.make_stage_1( config, env_spec, teams, config["NUMPY_SEED"])
+    stop_time = datetime.now()
+    s1_time_jit = stop_time - start_time
+    print(f"\nStage 1 Jit {s1_time_jit}")
     start_time = datetime.now()
     s1_episode_metrics, s1_last_episode_runner_state = stage_1_jit(_rng)
     stop_time = datetime.now()
-    print(f"\nStage 1 Elapsed {stop_time-start_time}")
+    s1_time_run = stop_time - start_time
+    print(f"\nStage 1 Elapsed {s1_time_run}")
+
+    with open(os.path.join(ROOT_DIR, 'timing.csv'), 'a') as f:
+        f.write(f"Stage 1 Jit Time, {s1_time_jit}")
+        f.write(f"Stage 1 Run Time, {s1_time_run}")
 
     # Turn off Memory profiling in favour of performance
     # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
 
+    with open(os.path.join(DATA_DIR, 'stage-1_reward-metrics.pkl'), 'wb') as f:
+        pickle.dump(s1_episode_metrics["reward"], f)
+
     flattened_cumulative_reward = jax.tree_map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
         s1_episode_metrics["reward"]
     )
+    with open(os.path.join(DATA_DIR, 'stage-1_cumulative-reward.pkl'), 'wb') as f:
+        pickle.dump(flattened_cumulative_reward, f)
     for team_ix, team_rewards in flattened_cumulative_reward.items():
         for p_ix, partner_rewards in team_rewards.items():
             plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
     plt.xlabel("Environment Step")
     plt.ylabel("Cumulative Mean Reward (mean over environment instances)")
     plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative_mean_reward_per_partner.png"))
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-reward-per-partner.png"))
     plt.close()
 
     flattened_cumulative_dishes = jax.tree_map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
         s1_episode_metrics["reward"]
     )
+    with open(os.path.join(DATA_DIR, 'stage-1_cumulative-delivered-dishes.pkl'), 'wb') as f:
+        pickle.dump(flattened_cumulative_dishes, f)
     for team_ix, team_dishes in flattened_cumulative_dishes.items():
         for p_ix, partner_dishes in team_dishes.items():
             plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
     plt.xlabel("Environment Step")
     plt.ylabel("Cumulative Mean Dishes Delivered (mean over environment instances)")
     plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative_mean_dishes_per_partner.png"))
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-dishes-per-partner.png"))
     plt.close()
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     flattened_loss = jax.tree_map(
-        (lambda x: x.reshape((total_update_steps, ) + x.shape[2:])),
+        (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
         s1_episode_metrics["update_metrics"]
         )
+    with open(os.path.join(DATA_DIR, 'stage-1_loss-total.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[0], flattened_loss), f)
+    with open(os.path.join(DATA_DIR, 'stage-1_loss-value.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[1][0], flattened_loss), f)
+    with open(os.path.join(DATA_DIR, 'stage-1_loss-actor.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[1][1], flattened_loss), f)
+    with open(os.path.join(DATA_DIR, 'stage-1_loss-entropy.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[1][2], flattened_loss), f)
     for team_ix, team_metrics in flattened_loss.items():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Update Step")
+    plt.xlabel("Total Loss")
     plt.ylabel("Return")
     plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss_per_partner.png"))
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-total.png"))
+    plt.close()
+    for team_ix, team_metrics in flattened_loss.items():
+        for p_ix, partner_metrics in team_metrics.items():
+            plt.plot(range(total_update_steps), partner_metrics[1][0], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Value Loss")
+    plt.ylabel("Return")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-value.png"))
+    plt.close()
+    for team_ix, team_metrics in flattened_loss.items():
+        for p_ix, partner_metrics in team_metrics.items():
+            plt.plot(range(total_update_steps), partner_metrics[1][1], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Actor Loss")
+    plt.ylabel("Return")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-actor.png"))
+    plt.close()
+    for team_ix, team_metrics in flattened_loss.items():
+        for p_ix, partner_metrics in team_metrics.items():
+            plt.plot(range(total_update_steps), partner_metrics[1][2], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Entropy")
+    plt.ylabel("Return")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-entropy.png"))
     plt.close()
 
 
@@ -374,16 +424,25 @@ def _process_stage_2(config, rng):
     load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
     team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
     rng, _rng = jax.random.split(rng)
+    start_time = datetime.now()
     stage_2_jit = FCP.make_stage_2(
         config, env_spec, teams,
         team_fcp_agents,
         load_steps,
         config["NUMPY_SEED"]
         )
+    stop_time = datetime.now()
+    s2_time_jit = stop_time - start_time
+    print(f"\nStage 2 Jit {s2_time_jit}")
     start_time = datetime.now()
     s2_episode_metrics, s2_last_episode_runner_state = stage_2_jit(_rng)
     stop_time = datetime.now()
-    print(f"\nStage 2 Elapsed {stop_time-start_time}")
+    s2_time_run = stop_time - start_time
+    print(f"\nStage 2 Elapsed {s2_time_run}")
+
+    with open(os.path.join(ROOT_DIR, 'timing.csv'), 'a') as f:
+        f.write(f"Stage 1 Jit Time, {s2_time_jit}")
+        f.write(f"Stage 1 Run Time, {s2_time_run}")
 
     # Turn off Memory profiling in favour of performance
     # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
@@ -431,17 +490,52 @@ def _process_stage_2(config, rng):
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     flattened_loss = jax.tree_map(
-        (lambda x: x.reshape((total_update_steps, ) + x.shape[2:])),
+        (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
         s2_episode_metrics["update_metrics"]
         )
+    with open(os.path.join(DATA_DIR, 'stage-2_loss-total.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[0], flattened_loss), f)
+    with open(os.path.join(DATA_DIR, 'stage-2_loss-value.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[1][0], flattened_loss), f)
+    with open(os.path.join(DATA_DIR, 'stage-2_loss-actor.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[1][1], flattened_loss), f)
+    with open(os.path.join(DATA_DIR, 'stage-2_loss-entropy.pkl'), 'wb') as f:
+        pickle.dump(jax.tree_map(lambda x: x[1][2], flattened_loss), f)
     for team_ix, team_metrics in flattened_loss.items():
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Update Step")
+    plt.xlabel("Total Loss")
     plt.ylabel("Return")
     plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss_per_partner.png"))
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-total.png"))
+    plt.close()
+    for team_ix, team_metrics in flattened_loss.items():
+        if team_fcp_agents[team_ix]:
+            p_ix, partner_metrics = 0, team_metrics[0]
+            plt.plot(range(total_update_steps), partner_metrics[1][0], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Value Loss")
+    plt.ylabel("Return")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-value.png"))
+    plt.close()
+    for team_ix, team_metrics in flattened_loss.items():
+        if team_fcp_agents[team_ix]:
+            p_ix, partner_metrics = 0, team_metrics[0]
+            plt.plot(range(total_update_steps), partner_metrics[1][1], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Actor Loss")
+    plt.ylabel("Return")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-actor.png"))
+    plt.close()
+    for team_ix, team_metrics in flattened_loss.items():
+        if team_fcp_agents[team_ix]:
+            p_ix, partner_metrics = 0, team_metrics[0]
+            plt.plot(range(total_update_steps), partner_metrics[1][2], label=f"{team_ix}-{p_ix}")
+    plt.xlabel("Entropy")
+    plt.ylabel("Return")
+    plt.legend()
+    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-entropy.png"))
     plt.close()
 
 
