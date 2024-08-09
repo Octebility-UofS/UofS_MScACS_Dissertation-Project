@@ -497,8 +497,9 @@ def _process_rollout(config, rng):
         rollout_dishes_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
 
     for rollout_permutation in rollout_permutations:
+        rng, _rng = jax.random.split(rng)
         __rollout_permutation(
-            config, rollout_env_spec, team_agents, rollout_teams,
+            config, _rng, rollout_env_spec, team_agents, rollout_teams,
             rollout_permutation, max_rollout_steps,
             rollout_reward_matrices, rollout_dishes_matrices
             )
