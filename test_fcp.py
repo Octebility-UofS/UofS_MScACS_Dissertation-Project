@@ -22,12 +22,12 @@ if __name__ == "__main__":
     if any([ arg.startswith("hydra.run.dir=") for arg in sys.argv ]):
         arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("hydra.run.dir=") ][0]
         _arg_dirpath = sys.argv.pop(arg_ix).replace("hydra.run.dir=", "")
-        ROOT_DIR = _arg_dirpath + f"_{__script_name}"
+        ROOT_DIR = os.path.join('.', 'out', _arg_dirpath + f"_{__script_name}")
         sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
     elif any([ arg.startswith("JOB_ID=") for arg in sys.argv ]):
         arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ][0]
         _arg_job_id = sys.argv.pop(arg_ix).replace("JOB_ID=", "")
-        ROOT_DIR = f"{__time}_{_arg_job_id}_{__script_name}"
+        ROOT_DIR = os.path.join('.', 'out', f"{__time}_{_arg_job_id}_{__script_name}")
         sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
     else:
         sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
