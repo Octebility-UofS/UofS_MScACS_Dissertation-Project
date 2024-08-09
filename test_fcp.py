@@ -448,11 +448,11 @@ def _process_stage_2(config, rng):
 
 
 def __rollout_permutation(
-        config, rollout_env_spec, team_agents, rollout_teams,
+        config, rng, rollout_env_spec, team_agents, rollout_teams,
         rollout_permutation, max_rollout_steps,
         rollout_reward_matrices, rollout_dishes_matrices
     ):
-    seq_envs_states, seq_envs_rewards = get_rollout(config, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
+    seq_envs_states, seq_envs_rewards = get_rollout(config, rng, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
     cumulative_reward_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
     delivered_dishes_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=1)), seq_envs_rewards)
     for team_ix, team_permutation in enumerate(rollout_permutation):
