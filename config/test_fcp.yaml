@@ -26,7 +26,8 @@
     "layout": "cramped_room"
 
 "TEAMS":
-  - "CLS_AGENT": "make_ppo_agent"
+  "0":
+    "CLS_AGENT": "make_ppo_agent"
     "AGENT_COUNT": 8
     "AGENT_IDS": ["agent_0", "agent_1"]
 
