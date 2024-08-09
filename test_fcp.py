@@ -295,7 +295,7 @@ def _process_stage_1(config, rng):
         {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
     )
     teams = []
-    for team_config in config["TEAMS"]:
+    for _team_ix, team_config in config["TEAMS"].items():
         teams.append(TeamSpec(
             globals().get(team_config["CLS_AGENT"]),
             team_config["AGENT_COUNT"],
@@ -364,7 +364,7 @@ def _process_stage_2(config, rng):
         {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
     )
     teams = []
-    for team_config in config["TEAMS"]:
+    for _team_ix, team_config in config["TEAMS"].items():
         teams.append(TeamSpec(
             globals().get(team_config["CLS_AGENT"]),
             team_config["AGENT_COUNT"],
@@ -472,7 +472,7 @@ def _process_rollout(config, rng):
         {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
     )
     teams = []
-    for team_config in config["TEAMS"]:
+    for _team_ix, team_config in config["TEAMS"].items():
         teams.append(TeamSpec(
             globals().get(team_config["CLS_AGENT"]),
             team_config["AGENT_COUNT"],
