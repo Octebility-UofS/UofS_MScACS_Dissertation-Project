@@ -17,7 +17,7 @@ import sys
 from datetime import datetime
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-ROOT_DIR = os.path.join('.', 'out', f"{__time}_0_{__script_name}")
+ROOT_DIR = os.path.join('.', 'out', f"0_{__time}_{__script_name}")
 if __name__ == "__main__":
     if any([ arg.startswith("hydra.run.dir=") for arg in sys.argv ]):
         arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("hydra.run.dir=") ][0]
@@ -27,7 +27,7 @@ if __name__ == "__main__":
     elif any([ arg.startswith("JOB_ID=") for arg in sys.argv ]):
         arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ][0]
         _arg_job_id = sys.argv.pop(arg_ix).replace("JOB_ID=", "")
-        ROOT_DIR = os.path.join('.', 'out', f"{__time}_{_arg_job_id}_{__script_name}")
+        ROOT_DIR = os.path.join('.', 'out', f"{_arg_job_id}_{__time}_{__script_name}")
         sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
     else:
         sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
