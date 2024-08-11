@@ -1,5 +1,5 @@
 
-from itertools import permutations
+from itertools import combinations, permutations
 import os
 # Recommended XLA flags for improving gpu performance
 # https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags
@@ -15,6 +15,8 @@ import os
 import __main__
 import sys
 from datetime import datetime
+
+from ficticious_coplay.rollout import make_rollout
 
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -42,7 +44,7 @@ import hydra
 from omegaconf import OmegaConf
 
 from ficticious_coplay.common import SelfPlayAgent
-from util.util import nary_sequences
+from util.util import HeatMatrix, LinePlot, file_write, nary_sequences, pickle_dump
 
 
 import jax
@@ -288,6 +290,29 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def _process_stage_1(config, rng):
     # This is part of the config
     # All environments specified here must have the same action space and observation space dimensions
@@ -316,9 +341,16 @@ def _process_stage_1(config, rng):
     s1_time_run = stop_time - start_time
     print(f"\nStage 1 Elapsed {s1_time_run}")
 
-    with open(os.path.join(ROOT_DIR, 'timing.csv'), 'a') as f:
-        f.write(f"Stage 1 Jit Time, {s1_time_jit}\n")
-        f.write(f"Stage 1 Run Time, {s1_time_run}\n")
+    file_write(
+        os.path.join(ROOT_DIR, 'timing.csv'),
+        f"Stage 1 Jit Time, {s1_time_jit}\n",
+        append=True
+        )
+    file_write(
+        os.path.join(ROOT_DIR, 'timing.csv'),
+        f"Stage 1 Run Time, {s1_time_run}\n",
+        append=True
+        )
 
     # Turn off Memory profiling in favour of performance
     # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
@@ -333,77 +365,87 @@ def _process_stage_1(config, rng):
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
         s1_episode_metrics["reward"]
     )
-    with open(os.path.join(DATA_DIR, 'stage-1_cumulative-reward.pkl'), 'wb') as f:
-        pickle.dump(flattened_cumulative_reward, f)
-    for team_ix, team_rewards in flattened_cumulative_reward.items():
-        for p_ix, partner_rewards in team_rewards.items():
-            plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Environment Step")
-    plt.ylabel("Cumulative Mean Reward (mean over environment instances)")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-reward-per-partner.png"))
-    plt.close()
-
     flattened_cumulative_dishes = jax.tree.map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
         s1_episode_metrics["reward"]
     )
-    with open(os.path.join(DATA_DIR, 'stage-1_cumulative-delivered-dishes.pkl'), 'wb') as f:
-        pickle.dump(flattened_cumulative_dishes, f)
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-1_cumulative-reward.pkl'),
+        flattened_cumulative_reward
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-1_cumulative-delivered-dishes.pkl'),
+        flattened_cumulative_dishes
+    )
+    reward_plot = LinePlot("Environment Step", "Cumulative Mean Reward")
+    dishes_plot = LinePlot("Environment Step", "Cumulative Mean Dishes Delivered")
+    for team_ix, team_rewards in flattened_cumulative_reward.items():
+        for p_ix, partner_rewards in team_rewards.items():
+            reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
     for team_ix, team_dishes in flattened_cumulative_dishes.items():
         for p_ix, partner_dishes in team_dishes.items():
-            plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Environment Step")
-    plt.ylabel("Cumulative Mean Dishes Delivered (mean over environment instances)")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-dishes-per-partner.png"))
-    plt.close()
+            dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
+    reward_plot.save(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-reward-per-partner.png"))
+    dishes_plot.save(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-dishes-per-partner.png"))
+    
+    
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     flattened_loss = jax.tree.map(
         (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
         s1_episode_metrics["update_metrics"]
         )
-    with open(os.path.join(DATA_DIR, 'stage-1_loss-total.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[0], flattened_loss), f)
-    with open(os.path.join(DATA_DIR, 'stage-1_loss-value.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[1][0], flattened_loss), f)
-    with open(os.path.join(DATA_DIR, 'stage-1_loss-actor.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[1][1], flattened_loss), f)
-    with open(os.path.join(DATA_DIR, 'stage-1_loss-entropy.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[1][2], flattened_loss), f)
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-1_loss-total.pkl'),
+        jax.tree.map(lambda x: x[0], flattened_loss)
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-1_loss-value.pkl'),
+        jax.tree.map(lambda x: x[1][0], flattened_loss)
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-1_loss-actor.pkl'),
+        jax.tree.map(lambda x: x[1][1], flattened_loss)
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-1_loss-entropy.pkl'),
+        jax.tree.map(lambda x: x[1][2], flattened_loss)
+    )
+
+    total_loss_plot = LinePlot("Update Step", "Total Loss")
+    value_loss_plot = LinePlot("Update Step", "Value Loss")
+    actor_loss_plot = LinePlot("Update Step", "Actor Loss")
+    entropy_loss_plot = LinePlot("Update Step", "Entropy")
     for team_ix, team_metrics in flattened_loss.items():
         for p_ix, partner_metrics in team_metrics.items():
-            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Total Loss")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-total.png"))
-    plt.close()
-    for team_ix, team_metrics in flattened_loss.items():
-        for p_ix, partner_metrics in team_metrics.items():
-            plt.plot(range(total_update_steps), partner_metrics[1][0], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Value Loss")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-value.png"))
-    plt.close()
-    for team_ix, team_metrics in flattened_loss.items():
-        for p_ix, partner_metrics in team_metrics.items():
-            plt.plot(range(total_update_steps), partner_metrics[1][1], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Actor Loss")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-actor.png"))
-    plt.close()
-    for team_ix, team_metrics in flattened_loss.items():
-        for p_ix, partner_metrics in team_metrics.items():
-            plt.plot(range(total_update_steps), partner_metrics[1][2], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Entropy")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-1_loss-entropy.png"))
-    plt.close()
+            total_loss_plot.add(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
+            value_loss_plot.add(range(total_update_steps), partner_metrics[1][0], label=f"{team_ix}-{p_ix}")
+            actor_loss_plot.add(range(total_update_steps), partner_metrics[1][1], label=f"{team_ix}-{p_ix}")
+            entropy_loss_plot.add(range(total_update_steps), partner_metrics[1][2], label=f"{team_ix}-{p_ix}")
+    total_loss_plot.save(os.path.join(ROOT_DIR, "stage-1_loss-total.png"))
+    value_loss_plot.save(os.path.join(ROOT_DIR, "stage-1_loss-value.png"))
+    actor_loss_plot.save(os.path.join(ROOT_DIR, "stage-1_loss-actor.png"))
+    entropy_loss_plot.save(os.path.join(ROOT_DIR, "stage-1_loss-entropy.png"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -453,6 +495,20 @@ def _process_stage_2(config, rng):
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
         s2_episode_metrics["reward"]
     )
+    flattened_cumulative_dishes = jax.tree.map(
+        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
+        s2_episode_metrics["reward"]
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-2_cumulative-reward.pkl'),
+        flattened_cumulative_reward
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-2_cumulative-delivered-dishes.pkl'),
+        flattened_cumulative_dishes
+    )
+    reward_plot = LinePlot("Environment Step", "Cumulative Mean Reward")
+    dishes_plot = LinePlot("Environment Step", "Cumulative Mean Dishes Delivered")
     for team_ix, team_rewards in flattened_cumulative_reward.items():
         for p_ix, partner_rewards in team_rewards.items():
             alpha=0.2
@@ -461,17 +517,7 @@ def _process_stage_2(config, rng):
                 if p_ix == 0:
                     label = f"{team_ix}-fcp"
                     alpha=1
-            plt.plot(range(partner_rewards.shape[0]), partner_rewards, label=label, alpha=alpha)
-    plt.xlabel("Environment Step")
-    plt.ylabel("Cumulative Mean Reward (mean over environment instances)")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_reward_per_partner.png"))
-    plt.close()
-
-    flattened_cumulative_dishes = jax.tree.map(
-        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
-        s2_episode_metrics["reward"]
-    )
+            reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=label, alpha=alpha)
     for team_ix, team_dishes in flattened_cumulative_dishes.items():
         for p_ix, partner_dishes in team_dishes.items():
             alpha=0.2
@@ -480,12 +526,9 @@ def _process_stage_2(config, rng):
                 if p_ix == 0:
                     label = f"{team_ix}-fcp"
                     alpha=1
-            plt.plot(range(partner_dishes.shape[0]), partner_dishes, label=label, alpha=alpha)
-    plt.xlabel("Environment Step")
-    plt.ylabel("Cumulative Mean Dishes Delivered (mean over environment instances)")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_dishes_per_partner.png"))
-    plt.close()
+            dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=label, alpha=alpha)
+    reward_plot.save(os.path.join(ROOT_DIR, "stage-2_cumulative-mean-reward-per-partner.png"))
+    dishes_plot.save(os.path.join(ROOT_DIR, "stage-2_cumulative-mean-dishes-per-partner.png"))
 
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
@@ -493,69 +536,58 @@ def _process_stage_2(config, rng):
         (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
         s2_episode_metrics["update_metrics"]
         )
-    with open(os.path.join(DATA_DIR, 'stage-2_loss-total.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[0], flattened_loss), f)
-    with open(os.path.join(DATA_DIR, 'stage-2_loss-value.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[1][0], flattened_loss), f)
-    with open(os.path.join(DATA_DIR, 'stage-2_loss-actor.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[1][1], flattened_loss), f)
-    with open(os.path.join(DATA_DIR, 'stage-2_loss-entropy.pkl'), 'wb') as f:
-        pickle.dump(jax.tree.map(lambda x: x[1][2], flattened_loss), f)
+
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-2_loss-total.pkl'),
+        jax.tree.map(lambda x: x[0], flattened_loss)
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-2_loss-value.pkl'),
+        jax.tree.map(lambda x: x[1][0], flattened_loss)
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-2_loss-actor.pkl'),
+        jax.tree.map(lambda x: x[1][1], flattened_loss)
+    )
+    pickle_dump(
+        os.path.join(DATA_DIR, 'stage-2_loss-entropy.pkl'),
+        jax.tree.map(lambda x: x[1][2], flattened_loss)
+    )
+
+    total_loss_plot = LinePlot("Update Step", "Total Loss")
+    value_loss_plot = LinePlot("Update Step", "Value Loss")
+    actor_loss_plot = LinePlot("Update Step", "Actor Loss")
+    entropy_loss_plot = LinePlot("Update Step", "Entropy")
     for team_ix, team_metrics in flattened_loss.items():
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
-            plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Total Loss")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-total.png"))
-    plt.close()
-    for team_ix, team_metrics in flattened_loss.items():
-        if team_fcp_agents[team_ix]:
-            p_ix, partner_metrics = 0, team_metrics[0]
-            plt.plot(range(total_update_steps), partner_metrics[1][0], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Value Loss")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-value.png"))
-    plt.close()
-    for team_ix, team_metrics in flattened_loss.items():
-        if team_fcp_agents[team_ix]:
-            p_ix, partner_metrics = 0, team_metrics[0]
-            plt.plot(range(total_update_steps), partner_metrics[1][1], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Actor Loss")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-actor.png"))
-    plt.close()
-    for team_ix, team_metrics in flattened_loss.items():
-        if team_fcp_agents[team_ix]:
-            p_ix, partner_metrics = 0, team_metrics[0]
-            plt.plot(range(total_update_steps), partner_metrics[1][2], label=f"{team_ix}-{p_ix}")
-    plt.xlabel("Entropy")
-    plt.ylabel("Return")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "stage-2_loss-entropy.png"))
-    plt.close()
+            total_loss_plot.add(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
+            value_loss_plot.add(range(total_update_steps), partner_metrics[1][0], label=f"{team_ix}-{p_ix}")
+            actor_loss_plot.add(range(total_update_steps), partner_metrics[1][1], label=f"{team_ix}-{p_ix}")
+            entropy_loss_plot.add(range(total_update_steps), partner_metrics[1][2], label=f"{team_ix}-{p_ix}")
+    total_loss_plot.save(os.path.join(ROOT_DIR, "stage-2_loss-total.png"))
+    value_loss_plot.save(os.path.join(ROOT_DIR, "stage-2_loss-value.png"))
+    actor_loss_plot.save(os.path.join(ROOT_DIR, "stage-2_loss-actor.png"))
+    entropy_loss_plot.save(os.path.join(ROOT_DIR, "stage-2_loss-entropy.png"))
 
 
 
 
-def __rollout_permutation(
-        config, rng, rollout_env_spec, team_agents, rollout_teams,
-        rollout_permutation, max_rollout_steps,
-        rollout_reward_matrices, rollout_dishes_matrices
-    ):
-    seq_envs_states, seq_envs_rewards = get_rollout(config, rng, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
-    cumulative_reward_per_agent = jax.tree.map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
-    delivered_dishes_per_agent = jax.tree.map(lambda x: jnp.sum(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=1)), seq_envs_rewards)
-    for team_ix, team_permutation in enumerate(rollout_permutation):
-        # TODO we're being lazy here because we know the current overcooked environment has only 2 agents
-        a0, a1 = team_permutation[0], team_permutation[1]
-        ix_a0 = rollout_teams[team_ix].index(a0)
-        ix_a1 = rollout_teams[team_ix].index(a1)
-        rollout_reward_matrices[team_ix][ix_a0, ix_a1] = cumulative_reward_per_agent["agent_0"]+cumulative_reward_per_agent["agent_1"]
-        rollout_dishes_matrices[team_ix][ix_a0, ix_a1] = delivered_dishes_per_agent["agent_0"]+delivered_dishes_per_agent["agent_1"]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def _process_rollout(config, rng):
     max_rollout_steps = config["ROLLOUT_STEPS"]
@@ -596,44 +628,45 @@ def _process_rollout(config, rng):
             )
 
     rollout_permutations = nary_sequences(*team_permutations)
-    rollout_reward_matrices = []
-    rollout_dishes_matrices = []
-    for rollout_team in rollout_teams:
-        rollout_reward_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
-        rollout_dishes_matrices.append(np.full((len(rollout_team), len(rollout_team)), -1.0))
+    rng, init_rng = jax.random.split(rng)
+    rng, _rng = jax.random.split(rng)
+    scanned_states, scanned_rewards = make_rollout(
+        config, init_rng, rollout_env_spec, team_agents, rollout_permutations, max_steps=max_rollout_steps
+    )(_rng)
 
-    for rollout_permutation in rollout_permutations:
-        rng, _rng = jax.random.split(rng)
-        __rollout_permutation(
-            config, _rng, rollout_env_spec, team_agents, rollout_teams,
-            rollout_permutation, max_rollout_steps,
-            rollout_reward_matrices, rollout_dishes_matrices
-            )
+    cumulative_reward = jax.tree.map(
+        lambda x: jnp.sum(jnp.mean(x, axis=2), axis=0),
+        scanned_rewards
+    )
+    cumulative_delivered_dishes = jax.tree.map(
+        lambda x: jnp.sum(jnp.mean(x == DELIVERY_REWARD, axis=2), axis=0),
+        scanned_rewards
+    )
 
-    for team_ix in range(len(rollout_reward_matrices)):
-        labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for (prefix, ckpt), _ in rollout_teams[team_ix] ]
-        fig, ax = plt.subplots(figsize=[30, 30])
-        ax.matshow(rollout_reward_matrices[team_ix], cmap=plt.cm.Blues)
-        for i in range(rollout_reward_matrices[team_ix].shape[0]):
-            for j in range(rollout_reward_matrices[team_ix].shape[1]):
-                c = np.round(rollout_reward_matrices[team_ix][i,j], 2)
-                ax.text(i, j, str(c), va='center', ha='center')
-        ax.set_xticks(np.arange(len(labels)), labels=labels)
-        ax.set_yticks(np.arange(len(labels)), labels=labels)
-        fig.savefig(os.path.join(ROOT_DIR, f"cumulative-reward_team-{team_ix}.png"))
-        plt.close(fig)
-
-        labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for (prefix, ckpt), _ in rollout_teams[team_ix] ]
-        fig, ax = plt.subplots(figsize=[30, 30])
-        ax.matshow(rollout_dishes_matrices[team_ix], cmap=plt.cm.Blues)
-        for i in range(rollout_dishes_matrices[team_ix].shape[0]):
-            for j in range(rollout_dishes_matrices[team_ix].shape[1]):
-                c = np.round(rollout_dishes_matrices[team_ix][i,j], 2)
-                ax.text(i, j, str(c), va='center', ha='center')
-        ax.set_xticks(np.arange(len(labels)), labels=labels)
-        ax.set_yticks(np.arange(len(labels)), labels=labels)
-        fig.savefig(os.path.join(ROOT_DIR, f"cumulative-delivered-dishes_team-{team_ix}.png"))
-        plt.close(fig)
+    for team_ix, team_partners in enumerate(rollout_teams):
+        labels = [ str(t[0][0])+str(t[0][1]) for t in team_partners ]
+        map_partner_to_index = { str(t[0][0])+str(t[0][1]): i for i, t in enumerate(team_partners) }
+        for agent_uid_ix_0, agent_uid_ix_1 in combinations(range(len(teams[team_ix].agent_uids)), 2):
+            agent_uid_0 = teams[team_ix].agent_uids[agent_uid_ix_0]
+            agent_uid_1 = teams[team_ix].agent_uids[agent_uid_ix_1]
+            save_name = f"_team-{team_ix}.{agent_uid_0}.{agent_uid_1}.png"
+            matrix_reward = np.full((len(labels), len(labels)), -1.0)
+            matrix_delivered_dishes = np.full((len(labels), len(labels)), -1.0)
+            for rollout_ix, rollout_permutation in enumerate(rollout_permutations):
+                p0_tup = rollout_permutation[team_ix][agent_uid_ix_0][0]
+                p1_tup = rollout_permutation[team_ix][agent_uid_ix_1][0]
+                p0_map_ix = map_partner_to_index[str(p0_tup[0])+str(p0_tup[1])]
+                p1_map_ix = map_partner_to_index[str(p1_tup[0])+str(p1_tup[1])]
+                combined_reward = cumulative_reward[agent_uid_0][rollout_ix] + cumulative_reward[agent_uid_1][rollout_ix]
+                combined_dishes = cumulative_delivered_dishes[agent_uid_0][rollout_ix] + cumulative_delivered_dishes[agent_uid_1][rollout_ix]
+                matrix_reward[p0_map_ix, p1_map_ix] = combined_reward
+                matrix_delivered_dishes[p0_map_ix, p1_map_ix] = combined_dishes
+            HeatMatrix(
+                matrix_reward, labels, labels
+            ).save(os.path.join(ROOT_DIR, "cumulative-reward") + save_name)
+            HeatMatrix(
+                matrix_delivered_dishes, labels, labels
+            ).save(os.path.join(ROOT_DIR, "cumulative-delivered-dishes") + save_name)
 
 
 

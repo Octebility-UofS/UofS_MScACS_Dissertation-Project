@@ -1,7 +1,11 @@
 from collections.abc import Iterable
 from functools import reduce
 from operator import mul
+import pickle
 from typing import Any, TypeVar, Union, overload
+
+import matplotlib.pyplot as plt
+import numpy as np
 
 K = TypeVar("K")
 V = TypeVar("V")
@@ -34,3 +38,43 @@ def nary_sequences(*sequences: Iterable[list[Any]]) -> list[Iterable[Any]]:
                     curr_ixs[ix-1] += 1
                     curr_ixs[ix] = 0
     return gen
+
+
+def file_write(file_name: str, content: str, append=False):
+    with open(file_name, 'a' if append else 'w') as f:
+        f.write(content)
+
+def pickle_dump(file_name: str, content):
+    with open(file_name, 'wb') as f:
+        pickle.dump(content, f)
+
+
+class LinePlot:
+    def __init__(self, x_label, y_label, **kwargs):
+        self.fig, self.ax = plt.subplots(nrows=1, ncols=1, **kwargs)
+        self.ax.set_xlabel(x_label)
+        self.ax.set_ylabel(y_label)
+
+    def add(self, x_data, y_data, **kwargs):
+        self.ax.plot(x_data, y_data, **kwargs)
+
+    def save(self, save_path: str):
+        self.ax.legend()
+        self.fig.savefig(save_path)
+        plt.close(self.fig)
+        
+
+class HeatMatrix:
+    def __init__(self, data_matrix, xlabels, ylabels, **kwargs):
+        self.fig, self.ax = plt.subplots(nrows=1, ncols=1, **kwargs)
+        self.ax.matshow(data_matrix, cmap=plt.cm.Blues)
+        for i in range(data_matrix.shape[0]):
+            for j in range(data_matrix.shape[1]):
+                c = np.round(data_matrix[i, j], 2)
+                self.ax.text(i, j, str(c), va='center', ha='center')
+        self.ax.set_xticks(np.arange(len(xlabels)), labels=xlabels)
+        self.ax.set_yticks(np.arange(len(ylabels)), labels=ylabels)
+
+    def save(self, save_path: str):
+        self.fig.savefig(save_path)
+        plt.close(self.fig)
