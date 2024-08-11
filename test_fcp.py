@@ -662,10 +662,10 @@ def _process_rollout(config, rng):
                 matrix_reward[p0_map_ix, p1_map_ix] = combined_reward
                 matrix_delivered_dishes[p0_map_ix, p1_map_ix] = combined_dishes
             HeatMatrix(
-                matrix_reward, labels, labels
+                matrix_reward, labels, labels, figsize=[32, 32]
             ).save(os.path.join(ROOT_DIR, "cumulative-reward") + save_name)
             HeatMatrix(
-                matrix_delivered_dishes, labels, labels
+                matrix_delivered_dishes, labels, labels, figsize=[32, 32]
             ).save(os.path.join(ROOT_DIR, "cumulative-delivered-dishes") + save_name)
 
 
