@@ -4,7 +4,7 @@ import jaxmarl
 import numpy as np
 
 from ficticious_coplay.common import EnvSpec, TeamSpec, _make_episode
-from ficticious_coplay.util.util import rec_frozenset
+from util.util import rec_frozenset
 
 
 def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec]):

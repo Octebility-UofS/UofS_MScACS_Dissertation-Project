@@ -16,7 +16,6 @@ import __main__
 import sys
 from datetime import datetime
 
-from ficticious_coplay.common import SelfPlayAgent
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 ROOT_DIR = os.path.join('.', 'out', f"0_{__time}_{__script_name}")
@@ -42,7 +41,8 @@ os.makedirs(DATA_DIR, exist_ok=True)
 import hydra
 from omegaconf import OmegaConf
 
-from ficticious_coplay.util.util import nary_sequences
+from ficticious_coplay.common import SelfPlayAgent
+from util.util import nary_sequences
 
 
 import jax

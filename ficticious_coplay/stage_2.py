@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import jaxmarl
 import numpy as np
 from ficticious_coplay.common import EnvSpec, SelfPlayAgent, SelfPlayAgentFactory, TeamSpec, _make_episode
-from ficticious_coplay.util.util import rec_frozenset
+from util.util import rec_frozenset
 
 def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec], cls_team_fcp_agents: list[Optional[SelfPlayAgentFactory]]):
     np_rng = np.random.default_rng(config["NUMPY_SEED"])

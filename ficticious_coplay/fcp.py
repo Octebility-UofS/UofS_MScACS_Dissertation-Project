@@ -10,7 +10,7 @@ from ficticious_coplay.common import (EnvSpec, SelfPlayAgentFactory, TeamSpec,
                                       untransform_env_partner)
 from ficticious_coplay.stage_1 import make_stage_1
 from ficticious_coplay.stage_2 import make_stage_2
-from ficticious_coplay.util.util import rec_frozenset
+from util.util import rec_frozenset
 
 
 def get_rollout(config, rng, env_spec: EnvSpec, team_agents: list[list[str]], team_assignments: list[list[tuple[tuple[str, int], Callable]]], max_steps=200):
