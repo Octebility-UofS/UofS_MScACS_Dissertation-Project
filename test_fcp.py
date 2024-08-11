@@ -1,5 +1,5 @@
 
-from itertools import combinations, permutations
+from itertools import permutations
 import os
 # Recommended XLA flags for improving gpu performance
 # https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags
@@ -15,6 +15,8 @@ import os
 import __main__
 import sys
 from datetime import datetime
+
+from ficticious_coplay.common import SelfPlayAgent
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 ROOT_DIR = os.path.join('.', 'out', f"0_{__time}_{__script_name}")
@@ -55,14 +57,12 @@ import jax.numpy as jnp
 import numpy as np
 from flax.linen.initializers import constant, orthogonal
 from flax.training.train_state import TrainState
-import jaxmarl
 from jaxmarl.environments.overcooked import overcooked_layouts
-from jaxmarl.viz.overcooked_visualizer import OvercookedVisualizer
 from jaxmarl.environments.overcooked.overcooked import DELIVERY_REWARD
 import optax
 import matplotlib.pyplot as plt
 
-from ficticious_coplay.fcp import FCP, EnvSpec, SelfPlayAgent, TeamSpec, get_rollout
+from ficticious_coplay.fcp import FCP, EnvSpec, TeamSpec, get_rollout
 
 
 class SimpleNetwork(nn.Module):
@@ -306,7 +306,7 @@ def _process_stage_1(config, rng):
 
     rng, _rng = jax.random.split(rng)
     start_time = datetime.now()
-    stage_1_jit = FCP.make_stage_1( config, env_spec, teams, config["NUMPY_SEED"])
+    stage_1_jit = FCP.make_stage_1( config, env_spec, teams)
     stop_time = datetime.now()
     s1_time_jit = stop_time - start_time
     print(f"\nStage 1 Jit {s1_time_jit}")
@@ -429,8 +429,7 @@ def _process_stage_2(config, rng):
     stage_2_jit = FCP.make_stage_2(
         config, env_spec, teams,
         team_fcp_agents,
-        load_steps,
-        config["NUMPY_SEED"]
+        load_steps
         )
     stop_time = datetime.now()
     s2_time_jit = stop_time - start_time

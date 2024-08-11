@@ -1,17 +1,22 @@
 from functools import partial
-from typing import Any, Callable, NamedTuple
+from typing import Any, Callable, Dict, List, NamedTuple, NewType, Union
 
 import jax
 import jax.numpy as jnp
-
+from omegaconf import DictKeyType, OmegaConf
 
 class EnvSpec(NamedTuple):
     env_id: str
     count: int
     env_kwargs: Any
 
+JaxmarlEnv = NewType("JaxmarlEnv", Any)
+
+def SelfPlayAgentFactory(init_rng: jax.dtypes.prng_key, config: dict[DictKeyType, Any], env_spec: 'EnvSpec', team_spec: 'TeamSpec', env: Any, checkpoint_prefix: str) -> 'SelfPlayAgent':
+    return NotImplementedError("This is merely a type function")
+
 class TeamSpec(NamedTuple):
-    agent_class: Callable[[Any, Any, list[EnvSpec], 'TeamSpec', Any, Any], 'SelfPlayAgent']
+    agent_class: SelfPlayAgentFactory
     agent_count: int
     agent_uids: list['AgentUID']
 
@@ -87,6 +92,9 @@ def _make_envs_step(
         # Transform all observation vectors to group them by partner agents
         env_obsv, env_state = env_obsv_state
         transformed_observations = transform_env_partner(env_obsv, map_agent_uid_to_partner_instance)
+        print(map_agent_uid_to_partner_instance)
+        print(transformed_observations)
+        print(partners)
 
 
         # Run each transformed stack of observations through their respective parntner agents
