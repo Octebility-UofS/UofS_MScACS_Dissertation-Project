@@ -616,7 +616,7 @@ def _process_rollout(config, rng):
         ax.matshow(rollout_reward_matrices[team_ix], cmap=plt.cm.Blues)
         for i in range(rollout_reward_matrices[team_ix].shape[0]):
             for j in range(rollout_reward_matrices[team_ix].shape[1]):
-                c = rollout_reward_matrices[team_ix][i,j]
+                c = np.round(rollout_reward_matrices[team_ix][i,j], 2)
                 ax.text(i, j, str(c), va='center', ha='center')
         ax.set_xticks(np.arange(len(labels)), labels=labels)
         ax.set_yticks(np.arange(len(labels)), labels=labels)
@@ -625,10 +625,10 @@ def _process_rollout(config, rng):
 
         labels = [ prefix.replace(f"{team_ix}-", "")+f"{ckpt}" for (prefix, ckpt), _ in rollout_teams[team_ix] ]
         fig, ax = plt.subplots(figsize=[30, 30])
-        ax.matshow(rollout_reward_matrices[team_ix], cmap=plt.cm.Blues)
-        for i in range(rollout_reward_matrices[team_ix].shape[0]):
-            for j in range(rollout_reward_matrices[team_ix].shape[1]):
-                c = rollout_reward_matrices[team_ix][i,j]
+        ax.matshow(rollout_dishes_matrices[team_ix], cmap=plt.cm.Blues)
+        for i in range(rollout_dishes_matrices[team_ix].shape[0]):
+            for j in range(rollout_dishes_matrices[team_ix].shape[1]):
+                c = np.round(rollout_dishes_matrices[team_ix][i,j], 2)
                 ax.text(i, j, str(c), va='center', ha='center')
         ax.set_xticks(np.arange(len(labels)), labels=labels)
         ax.set_yticks(np.arange(len(labels)), labels=labels)
