@@ -325,8 +325,9 @@ def _process_stage_1(config, rng):
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
 
-    with open(os.path.join(DATA_DIR, 'stage-1_reward-metrics.pkl'), 'wb') as f:
-        pickle.dump(s1_episode_metrics["reward"], f)
+    # Don't save this because the file is gigantic >10 GB on large runs
+    # with open(os.path.join(DATA_DIR, 'stage-1_reward-metrics.pkl'), 'wb') as f:
+    #     pickle.dump(s1_episode_metrics["reward"], f)
 
     flattened_cumulative_reward = jax.tree_map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
