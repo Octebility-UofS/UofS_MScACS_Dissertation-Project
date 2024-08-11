@@ -34,19 +34,6 @@ class EnvMapping(NamedTuple):
     teams: list[TeamSpec]
 
 
-"""
-IDEA
-Go back to what is mentioned in the paper
-agents are randomly assigned to environments
-=> many more environments than agets
-=> Instead of centering the process around environments, center the process around agents
-=> stack environments in one big vmap and keep track of which agent is assigned to which environment
-=> Simulate all environments in parallel (duh) and collect observations according to the respective agents
-=> parallelize each agent evaluating their next action and value and everything in their own loop probably
-    (since I can't really see how that can be further parallelized bc that's not how vmap works)
-=> we'll have to figure out the update loop later
-"""
-
 class SelfPlayAgent(NamedTuple):
     get_action: Callable[[Any, jnp.ndarray, jnp.ndarray, Any], tuple[Any, jnp.ndarray, Any]] # rng, obs_v, flattened_obs_v, agent_state -> update_agent_state, actions_v, aux_data
     update: Callable[[Any, Any, Any], tuple[Any, Any]] # config, rng, trajectories -> updated_agent_state, metrics
@@ -162,7 +149,7 @@ def _make_envs_step(
                     tree_partner_aux_data[team_ix][p_ix],
                     transformed_reward[team_ix][p_ix],
                     transformed_observations[team_ix][p_ix],
-                    {} # TODO what to do with 'info'? info = jax.tree_map(lambda x: x.reshape((config["NUM_ACTORS"])), info)
+                    {} # TODO what to do with 'info'? info = jax.tree.map(lambda x: x.reshape((config["NUM_ACTORS"])), info)
                 ))
 
         
@@ -380,11 +367,11 @@ def get_rollout(config, rng, env_spec: EnvSpec, team_agents: list[list[str]], te
     state_seq = []
     reward_seq = []
     for step_ix in range(max_steps):
-        state_seq.append(jax.tree_map(
+        state_seq.append(jax.tree.map(
             lambda x: x[step_ix],
             env_states
         ))
-        reward_seq.append(jax.tree_map(
+        reward_seq.append(jax.tree.map(
             lambda x: x[step_ix],
             rewards
         ))

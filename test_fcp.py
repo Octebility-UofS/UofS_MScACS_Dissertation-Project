@@ -329,7 +329,7 @@ def _process_stage_1(config, rng):
     # with open(os.path.join(DATA_DIR, 'stage-1_reward-metrics.pkl'), 'wb') as f:
     #     pickle.dump(s1_episode_metrics["reward"], f)
 
-    flattened_cumulative_reward = jax.tree_map(
+    flattened_cumulative_reward = jax.tree.map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
         s1_episode_metrics["reward"]
     )
@@ -344,7 +344,7 @@ def _process_stage_1(config, rng):
     plt.savefig(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-reward-per-partner.png"))
     plt.close()
 
-    flattened_cumulative_dishes = jax.tree_map(
+    flattened_cumulative_dishes = jax.tree.map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
         s1_episode_metrics["reward"]
     )
@@ -360,18 +360,18 @@ def _process_stage_1(config, rng):
     plt.close()
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
-    flattened_loss = jax.tree_map(
+    flattened_loss = jax.tree.map(
         (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
         s1_episode_metrics["update_metrics"]
         )
     with open(os.path.join(DATA_DIR, 'stage-1_loss-total.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[0], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[0], flattened_loss), f)
     with open(os.path.join(DATA_DIR, 'stage-1_loss-value.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[1][0], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[1][0], flattened_loss), f)
     with open(os.path.join(DATA_DIR, 'stage-1_loss-actor.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[1][1], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[1][1], flattened_loss), f)
     with open(os.path.join(DATA_DIR, 'stage-1_loss-entropy.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[1][2], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[1][2], flattened_loss), f)
     for team_ix, team_metrics in flattened_loss.items():
         for p_ix, partner_metrics in team_metrics.items():
             plt.plot(range(total_update_steps), partner_metrics[0], label=f"{team_ix}-{p_ix}")
@@ -450,7 +450,7 @@ def _process_stage_2(config, rng):
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
 
-    flattened_cumulative_reward = jax.tree_map(
+    flattened_cumulative_reward = jax.tree.map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
         s2_episode_metrics["reward"]
     )
@@ -469,7 +469,7 @@ def _process_stage_2(config, rng):
     plt.savefig(os.path.join(ROOT_DIR, "stage-2_cumulative_mean_reward_per_partner.png"))
     plt.close()
 
-    flattened_cumulative_dishes = jax.tree_map(
+    flattened_cumulative_dishes = jax.tree.map(
         (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
         s2_episode_metrics["reward"]
     )
@@ -490,18 +490,18 @@ def _process_stage_2(config, rng):
 
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
-    flattened_loss = jax.tree_map(
+    flattened_loss = jax.tree.map(
         (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
         s2_episode_metrics["update_metrics"]
         )
     with open(os.path.join(DATA_DIR, 'stage-2_loss-total.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[0], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[0], flattened_loss), f)
     with open(os.path.join(DATA_DIR, 'stage-2_loss-value.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[1][0], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[1][0], flattened_loss), f)
     with open(os.path.join(DATA_DIR, 'stage-2_loss-actor.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[1][1], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[1][1], flattened_loss), f)
     with open(os.path.join(DATA_DIR, 'stage-2_loss-entropy.pkl'), 'wb') as f:
-        pickle.dump(jax.tree_map(lambda x: x[1][2], flattened_loss), f)
+        pickle.dump(jax.tree.map(lambda x: x[1][2], flattened_loss), f)
     for team_ix, team_metrics in flattened_loss.items():
         if team_fcp_agents[team_ix]:
             p_ix, partner_metrics = 0, team_metrics[0]
@@ -548,8 +548,8 @@ def __rollout_permutation(
         rollout_reward_matrices, rollout_dishes_matrices
     ):
     seq_envs_states, seq_envs_rewards = get_rollout(config, rng, rollout_env_spec, team_agents, rollout_permutation, max_steps=max_rollout_steps)
-    cumulative_reward_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
-    delivered_dishes_per_agent = jax.tree_map(lambda x: jnp.sum(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=1)), seq_envs_rewards)
+    cumulative_reward_per_agent = jax.tree.map(lambda x: jnp.sum(jnp.mean(x, axis=1)), seq_envs_rewards)
+    delivered_dishes_per_agent = jax.tree.map(lambda x: jnp.sum(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=1)), seq_envs_rewards)
     for team_ix, team_permutation in enumerate(rollout_permutation):
         # TODO we're being lazy here because we know the current overcooked environment has only 2 agents
         a0, a1 = team_permutation[0], team_permutation[1]
