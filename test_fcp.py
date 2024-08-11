@@ -62,9 +62,8 @@ from flax.training.train_state import TrainState
 from jaxmarl.environments.overcooked import overcooked_layouts
 from jaxmarl.environments.overcooked.overcooked import DELIVERY_REWARD
 import optax
-import matplotlib.pyplot as plt
 
-from ficticious_coplay.fcp import FCP, EnvSpec, TeamSpec, get_rollout
+from ficticious_coplay.fcp import FCP, EnvSpec, TeamSpec
 
 
 class SimpleNetwork(nn.Module):
@@ -511,22 +510,16 @@ def _process_stage_2(config, rng):
     dishes_plot = LinePlot("Environment Step", "Cumulative Mean Dishes Delivered")
     for team_ix, team_rewards in flattened_cumulative_reward.items():
         for p_ix, partner_rewards in team_rewards.items():
-            alpha=0.2
-            label = ""
-            if team_fcp_agents[team_ix]:
-                if p_ix == 0:
-                    label = f"{team_ix}-fcp"
-                    alpha=1
-            reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=label, alpha=alpha)
+            if p_ix == 0 and team_fcp_agents[team_ix]:
+                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-fcp", alpha=1.0)
+            else:
+                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.2)
     for team_ix, team_dishes in flattened_cumulative_dishes.items():
         for p_ix, partner_dishes in team_dishes.items():
-            alpha=0.2
-            label = ""
-            if team_fcp_agents[team_ix]:
-                if p_ix == 0:
-                    label = f"{team_ix}-fcp"
-                    alpha=1
-            dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=label, alpha=alpha)
+            if p_ix == 0 and team_fcp_agents[team_ix]:
+                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-fcp", alpha=1.0)
+            else:
+                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, alpha=0.2)
     reward_plot.save(os.path.join(ROOT_DIR, "stage-2_cumulative-mean-reward-per-partner.png"))
     dishes_plot.save(os.path.join(ROOT_DIR, "stage-2_cumulative-mean-dishes-per-partner.png"))
 
