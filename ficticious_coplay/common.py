@@ -92,9 +92,6 @@ def _make_envs_step(
         # Transform all observation vectors to group them by partner agents
         env_obsv, env_state = env_obsv_state
         transformed_observations = transform_env_partner(env_obsv, map_agent_uid_to_partner_instance)
-        print(map_agent_uid_to_partner_instance)
-        print(transformed_observations)
-        print(partners)
 
 
         # Run each transformed stack of observations through their respective parntner agents
