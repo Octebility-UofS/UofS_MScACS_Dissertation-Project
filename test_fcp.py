@@ -623,9 +623,9 @@ def _process_rollout(config, rng):
     rollout_permutations = nary_sequences(*team_permutations)
     rng, init_rng = jax.random.split(rng)
     rng, _rng = jax.random.split(rng)
-    scanned_states, scanned_rewards = make_rollout(
+    scanned_states, scanned_rewards = jax.jit(make_rollout(
         config, init_rng, rollout_env_spec, team_agents, rollout_permutations, max_steps=max_rollout_steps
-    )(_rng)
+    ))(_rng)
 
     cumulative_reward = jax.tree.map(
         lambda x: jnp.sum(jnp.mean(x, axis=2), axis=0),
