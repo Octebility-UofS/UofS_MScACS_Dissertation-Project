@@ -1,18 +1,33 @@
-from datetime import datetime
 import os
+import __main__
 import sys
-import hydra
+from datetime import datetime
 
-JOB_ID = "0"
+from util.util import LinePlot, pickle_dump
+__script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
+__time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+ROOT_DIR = os.path.join('.', 'out', f"0_{__time}_{__script_name}")
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        JOB_ID = sys.argv.pop(1)
-        sys.argv.append(f'hydra.run.dir=out/{JOB_ID}/hydra')
-ROOT_DIR = os.path.join('.', 'out', JOB_ID)
+    if any([ arg.startswith("hydra.run.dir=") for arg in sys.argv ]):
+        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("hydra.run.dir=") ][0]
+        _arg_dirpath = sys.argv.pop(arg_ix).replace("hydra.run.dir=", "")
+        ROOT_DIR = os.path.join('.', 'out', _arg_dirpath + f"_{__script_name}")
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+    elif any([ arg.startswith("JOB_ID=") for arg in sys.argv ]):
+        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ][0]
+        _arg_job_id = sys.argv.pop(arg_ix).replace("JOB_ID=", "")
+        ROOT_DIR = os.path.join('.', 'out', f"{_arg_job_id}_{__time}_{__script_name}")
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+    else:
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
+DATA_DIR = os.path.join(ROOT_DIR, 'data')
+os.makedirs(DATA_DIR, exist_ok=True)
 
+
+import hydra
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -62,26 +77,31 @@ def _make_env_step(config, env):
         )
 
         runner_state = (train_states, env_state, obsv, update_count, rng)
-        return runner_state, transition
+        return runner_state, (transition, reward)
 
     return _env_step
 
 def _make_update_step(config, env):
     def _update_step(runner_state, _):
         # Collect trajectories for replay buffer
-        runner_state, traj_buffer = jax.lax.scan(
+        runner_state, (traj_buffer, rewards) = jax.lax.scan(
             _make_env_step(config, env),
             runner_state, None,
             length=config["REPLAY_ENV_STEPS"]
         )
 
+        cumulative_mean_reward = jax.tree.map(
+            lambda x: jnp.mean(jnp.sum(x, axis=0)),
+            rewards
+        )
+
         # Perform TD3 update
         train_states, env_state, last_obs, update_count, rng = runner_state
         rng, _rng = jax.random.split(rng)
-        train_states, metric = make_td3_update(config)(_rng, train_states, traj_buffer)
+        train_states, loss_info = make_td3_update(config)(_rng, train_states, traj_buffer)
 
         runner_state = (train_states, env_state, last_obs, update_count, rng)
-        return runner_state, metric
+        return runner_state, {"loss": loss_info, "reward": cumulative_mean_reward}
     return _update_step
 
 def make_train(config, rng_init):
@@ -141,47 +161,30 @@ def main(config):
     stop_time = datetime.now()
     print(f"Training Elapsed {stop_time-start_time}")
 
-    metrics_y_actor_loss = np.array(res['metrics']['actor_loss'])
+    metrics_y_actor_loss = np.array(res['metrics']['loss']['actor_loss'])
     # get how many non-nan values
     y_actor_loss = np.empty((metrics_y_actor_loss.shape[0], ))
     for i in range(y_actor_loss.shape[0]):
         non_nan = metrics_y_actor_loss[i][~np.isnan(metrics_y_actor_loss[i])]
         y_actor_loss[i] = np.mean(non_nan)
 
-    y_critic_loss = np.mean(res['metrics']['critic_loss'], axis=1)
+    y_critic_loss = np.mean(res['metrics']['loss']['critic_loss'], axis=1)
 
     plt.plot(np.arange(y_critic_loss.shape[0]), y_critic_loss, label="Critic Loss")
     plt.plot(np.arange(y_actor_loss.shape[0]), y_actor_loss, label="Actor Loss")
     plt.legend()
     plt.savefig(os.path.join(ROOT_DIR, "train_loss.png"))
     plt.close()
-    
-    return
-    rng = jax.random.PRNGKey(0)
 
-    env = jaxmarl.make("ant_4x2")
-    rng, _rng = jax.random.split(rng)
-    obs, state = env.reset(_rng)
+    pickle_dump(
+        os.path.join(DATA_DIR, 'mean-reward.pkl'),
+        res['metrics']['reward']
+    )
 
-    state_history = [state.pipeline_state, ]
-    for i in range(5):
-        print(f"")
-        actions = {}
-        for agent_id in env.agents:
-            rng, _rng = jax.random.split(rng)
-            actions[agent_id] = env.action_space(agent_id).sample(_rng)
-        rng, _rng = jax.random.split(rng)
-        obs, state, reward, done, info = env.step(_rng, state, actions)
-        print(info)
-        return
-        state_history.append(state.pipeline_state)
-
-    # print("State", state_history[0].__dict__.keys())
-    # print("Pipeline State", state_history[0].pipeline_state.__dict__.keys())
-    rendered_html = html.render(env.sys, state_history)
-    with open("test_html", 'w') as f:
-        f.write(rendered_html)
-    # print(html.render(env.sys, [s.pipeline_state.q for s in state_history]))
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    reward_data = res['metrics']['reward']['__all__']
+    reward_plot.add(np.arange(reward_data.shape[0]), reward_data)
+    reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
 
 if __name__ == "__main__":
     main()

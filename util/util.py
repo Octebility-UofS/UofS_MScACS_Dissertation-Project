@@ -54,12 +54,16 @@ class LinePlot:
         self.fig, self.ax = plt.subplots(nrows=1, ncols=1, **kwargs)
         self.ax.set_xlabel(x_label)
         self.ax.set_ylabel(y_label)
+        self.has_labels = False
 
     def add(self, x_data, y_data, **kwargs):
+        if 'label' in kwargs and kwargs['label']:
+            self.has_labels = True
         self.ax.plot(x_data, y_data, **kwargs)
 
     def save(self, save_path: str):
-        self.ax.legend()
+        if self.has_labels:
+            self.ax.legend()
         self.fig.savefig(save_path)
         plt.close(self.fig)
         

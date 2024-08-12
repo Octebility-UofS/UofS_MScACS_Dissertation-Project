@@ -115,11 +115,11 @@ def _make_delayed_policy_update(config):
         state_actor = state_actor.apply_gradients(grads=actor_grads)
 
         # Update the frozen target models
-        state_critic_target = state_critic_target.replace(params=jax.tree_map(
+        state_critic_target = state_critic_target.replace(params=jax.tree.map(
             lambda param, target_param: config["TAU"]*param + (1-config["TAU"])*target_param,
             state_critic.params, state_critic_target.params
         ))
-        state_actor_target = state_actor_target.replace(params=jax.tree_map(
+        state_actor_target = state_actor_target.replace(params=jax.tree.map(
             lambda param, target_param: config["TAU"]*param + (1-config["TAU"])*target_param,
             state_actor.params, state_actor_target.params
         ))
@@ -128,11 +128,6 @@ def _make_delayed_policy_update(config):
         update_state = rng, train_states, batch_count
         return update_state, actor_loss
     return _delayed_policy_update
-
-def _make_actor_critic_policy_update(config):
-    def _policy_update(update_state, batch_traj):
-        pass
-    return _policy_update
 
 
 def _make_td3_update_batch(config):
@@ -196,17 +191,17 @@ def _make_td3_update_batch(config):
 def make_td3_update(config):
     def _td3_update(rng: jax.dtypes.prng_key, train_states, traj_buffer):
         # Split the replay buffer into shuffled batches
-        flattened_traj_buffer = jax.tree_map(
+        flattened_traj_buffer = jax.tree.map(
             lambda x: x.reshape((config["NUM_BATCHES"]*config["BATCH_SIZE"], ) + x.shape[2:]),
             traj_buffer
         )
         rng, _rng = jax.random.split(rng)
         permutation = jax.random.permutation(_rng, config["NUM_BATCHES"]*config["BATCH_SIZE"])
-        shuffled_flattened_traj_buffer = jax.tree_map(
+        shuffled_flattened_traj_buffer = jax.tree.map(
             lambda x: jnp.take(x, permutation, axis=0),
             flattened_traj_buffer
         )
-        batches = jax.tree_map(
+        batches = jax.tree.map(
             lambda x: x.reshape( (config["NUM_BATCHES"], config["BATCH_SIZE"]) + x.shape[1:] ),
             shuffled_flattened_traj_buffer
         )
@@ -223,60 +218,3 @@ def make_td3_update(config):
         _rng, train_states, batch_count = update_state
         return train_states, loss_info
     return _td3_update
-
-# def make_actor_critic(
-#     rng,
-#     cls_actor: Type[nn.Module], args_actor: list[Any], kwargs_actor: dict[str, Any],
-#     init_x_actor,
-#     cls_critic: Type[nn.Module], args_critic: list[Any], kwargs_critic: dict[str, Any],
-#     init_x_critic,
-#     learn_rate=3e-4
-#     ):
-#     actor = cls_actor(*args_actor, **kwargs_actor)
-#     rng, _rng = jax.random.split(rng)
-#     actor_params = actor.init(_rng, init_x_actor)
-#     actor_init_state = TrainState.create(
-#         apply_fn=actor.apply,
-#         params=actor_params,
-#         tx=optax.adam(learn_rate, eps=1e-5)
-#     )
-
-#     critic = cls_critic(*args_critic, **kwargs_critic)
-#     rng, _rng = jax.random.split(rng)
-#     critic_params = critic.init(_rng, init_x_critic)
-#     critic_init_state = TrainState.create(
-#         apply_fn=critic.apply,
-#         params=critic_params,
-#         tx=optax.adam(learn_rate, eps=1e-5)
-#     )
-
-#     return actor_init_state, critic_init_state
-
-
-
-# def make_td3(
-#     state_dim: int, action_dim: int, actor_module: nn.Module, critic_module: nn.Module,
-#     discount=0.99,
-#     tau=0.005,
-#     policy_noise=0.2,
-#     noise_clip=0.5,
-#     policy_freq=2
-#     ):
-#     rng = jax.random.PRNGKey(0)
-#     rng, _rng = jax.random.split(rng)
-#     actor_state, critic_state = make_actor_critic(_rng, None, None, None, None, None, None, None, None)
-#     actor_target_state = actor_state
-#     critic_target_state = critic_state
-
-#     def train(batch_size):
-#         # Sample replay buffer
-#         done, actions, aux_data, reward, observations, info = trajectories
-
-#         # Select action according to policy and add clipped noise
-#         rng, _rng = jax.random.split(rng)
-#         # Original implementation adds noise to get more "random" actions
-#         # However jax allows you to simply "sample" from the action space which should give it a more random distribution
-#         # noise = jnp.clip(( jax.random.normal(_rng, actions.shape) * policy_noise ), -noise_clip, noise_clip)
-#         # noise = (torch.randn_like(action) * self.policy_noise).clamp(-self.noise_clip, self.noise_clip)	
-# 		# next_action = (self.actor_target(next_state) + noise).clamp(-self.max_action, self.max_action)
-
