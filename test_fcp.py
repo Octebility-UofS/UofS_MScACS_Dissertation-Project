@@ -504,8 +504,8 @@ def _process_stage_2(config, rng):
     print(f"\nStage 2 Elapsed {s2_time_run}")
 
     with open(os.path.join(ROOT_DIR, 'timing.csv'), 'a') as f:
-        f.write(f"Stage 1 Jit Time, {s2_time_jit}\n")
-        f.write(f"Stage 1 Run Time, {s2_time_run}\n")
+        f.write(f"Stage 2 Jit Time, {s2_time_jit}\n")
+        f.write(f"Stage 2 Run Time, {s2_time_run}\n")
 
     # Turn off Memory profiling in favour of performance
     # __profile_dir = os.path.join(ROOT_DIR, 'mem_profile')
