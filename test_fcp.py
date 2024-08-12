@@ -328,9 +328,10 @@ def _process_stage_1(config, rng):
             team_config["AGENT_IDS"]
         ))
 
+    rng, init_rng = jax.random.split(rng)
     rng, _rng = jax.random.split(rng)
     start_time = datetime.now()
-    stage_1_jit = FCP.make_stage_1( config, env_spec, teams)
+    stage_1_jit = FCP.make_stage_1(config, init_rng, env_spec, teams)
     stop_time = datetime.now()
     s1_time_jit = stop_time - start_time
     print(f"\nStage 1 Jit {s1_time_jit}")
@@ -465,10 +466,11 @@ def _process_stage_2(config, rng):
     saved_steps = config["_CHECKPOINT_STEPS"]
     load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
     team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
+    rng, init_rng = jax.random.split(rng)
     rng, _rng = jax.random.split(rng)
     start_time = datetime.now()
     stage_2_jit = FCP.make_stage_2(
-        config, env_spec, teams,
+        config, init_rng, env_spec, teams,
         team_fcp_agents,
         load_steps
         )

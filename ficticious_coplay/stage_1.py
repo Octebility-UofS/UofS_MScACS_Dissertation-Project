@@ -61,9 +61,28 @@ def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec]):
     )
 
 
-def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec]):
+def make_stage_1(config, init_rng: jax.dtypes.prng_key, env_spec: EnvSpec, teams: list[TeamSpec]):
 
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
+
+    # Create all parallelised partner agents for each team
+    partners = []
+    partner_states = []
+    for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
+        team_partners = []
+        team_partner_states = []
+        for p_ix in range(partner_count):
+            init_rng, _rng = jax.random.split(init_rng)
+            checkpoint_prefix = f"{team_ix}-{p_ix}_"
+            partner, partner_state = cls_SelfPlayAgent(
+                _rng, config,
+                env_spec, teams[team_ix], env,
+                checkpoint_prefix
+                )
+            team_partners.append(partner)
+            team_partner_states.append(partner_state)
+        partners.append(team_partners)
+        partner_states.append(team_partner_states)
 
     (
         map_agent_uid_to_partner_instance,
@@ -74,26 +93,6 @@ def make_stage_1(config, env_spec: EnvSpec, teams: list[TeamSpec]):
         # Create all parallelised environments
         rng_array = jax.random.split(rng, env_spec.count)
         env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
-
-        # Create all parallelised partner agents for each team
-        partners = []
-        partner_states = []
-        for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(teams):
-            team_partners = []
-            team_partner_states = []
-            for p_ix in range(partner_count):
-                rng, _rng = jax.random.split(rng)
-                checkpoint_prefix = f"{team_ix}-{p_ix}_"
-                partner, partner_state = cls_SelfPlayAgent(
-                    _rng, config,
-                    env_spec, teams[team_ix], env,
-                    checkpoint_prefix
-                    )
-                team_partners.append(partner)
-                team_partner_states.append(partner_state)
-            partners.append(team_partners)
-            partner_states.append(team_partner_states)
-
         
 
         # Scan over episodes

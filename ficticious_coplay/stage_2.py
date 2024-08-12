@@ -127,13 +127,53 @@ def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec], cls_tea
     
 
 def make_stage_2(
-    config,
+    config, init_rng: jax.dtypes.prng_key,
     env_spec: EnvSpec, team_specs: list[TeamSpec],
     cls_team_fcp_agents: list[Optional[SelfPlayAgentFactory]],
     checkpoint_load_steps: list[int]
     ):
 
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
+
+    # Additionally, create new fcp agent for each team
+    # Apart from FCP agent, all other networks will be frozen
+    partners = []
+    partner_states = []
+    for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(team_specs):
+        team_partners = []
+        team_partner_states = []
+
+        if cls_team_fcp_agents[team_ix]:
+            init_rng, _rng = jax.random.split(init_rng)
+            fcp_agent, fcp_agent_state = cls_team_fcp_agents[team_ix](
+                _rng, config,
+                env_spec, team_specs[team_ix], env,
+                f"fcp-{team_ix}_"
+            )
+            team_partners.append(fcp_agent)
+            team_partner_states.append(fcp_agent_state)
+
+        for p_ix in range(partner_count):
+            for ckpt_step in checkpoint_load_steps:
+                init_rng, _rng = jax.random.split(init_rng)
+                checkpoint_prefix = f"{team_ix}-{p_ix}_"
+                partner, init_partner_state = cls_SelfPlayAgent(
+                    _rng, config,
+                    env_spec, team_specs[team_ix], env,
+                    checkpoint_prefix
+                    )
+                loaded_partner_state, fn_frozen_update, fn_frozen_save = partner.load(init_partner_state, ckpt_step)
+                frozen_partner = SelfPlayAgent(
+                    partner.get_action,
+                    fn_frozen_update,
+                    fn_frozen_save,
+                    partner.load
+                )
+                team_partners.append(frozen_partner)
+                team_partner_states.append(loaded_partner_state)
+
+        partners.append(team_partners)
+        partner_states.append(team_partner_states)
 
     teams = []
     for team_ix, (cls_SelfPlayAgent, partner_count, agent_uids) in enumerate(team_specs):
@@ -151,60 +191,7 @@ def make_stage_2(
     def _stage_2(rng):
        # Create all parallelised environments
         rng_array = jax.random.split(rng, env_spec.count)
-        env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)
-
-        # Additionally, create new fcp agent for each team
-        # Apart from FCP agent, all other networks will be frozen
-        partners = []
-        partner_states = []
-        for team_ix, (cls_SelfPlayAgent, partner_count, _) in enumerate(team_specs):
-            team_partners = []
-            team_partner_states = []
-
-            if cls_team_fcp_agents[team_ix]:
-                rng, _rng = jax.random.split(rng)
-                fcp_agent, fcp_agent_state = cls_team_fcp_agents[team_ix](
-                    _rng, config,
-                    env_spec, team_specs[team_ix], env,
-                    f"fcp-{team_ix}_"
-                )
-                team_partners.append(fcp_agent)
-                team_partner_states.append(fcp_agent_state)
-
-            for p_ix in range(partner_count):
-                for ckpt_step in checkpoint_load_steps:
-                    rng, _rng = jax.random.split(rng)
-                    checkpoint_prefix = f"{team_ix}-{p_ix}_"
-                    partner, init_partner_state = cls_SelfPlayAgent(
-                        _rng, config,
-                        env_spec, team_specs[team_ix], env,
-                        checkpoint_prefix
-                        )
-                    loaded_partner_state, fn_frozen_update, fn_frozen_save = partner.load(init_partner_state, ckpt_step)
-                    frozen_partner = SelfPlayAgent(
-                        partner.get_action,
-                        fn_frozen_update,
-                        fn_frozen_save,
-                        partner.load
-                    )
-                    team_partners.append(frozen_partner)
-                    team_partner_states.append(loaded_partner_state)
-
-            partners.append(team_partners)
-            partner_states.append(team_partner_states)
-
-        # # Update the TeamSpec for each team to properly reflect the number of instances
-        # # We simply update the agent_count in the TeamSpec
-        # teams = [
-        #     TeamSpec(
-        #         team_specs[team_ix].agent_class,
-        #         len(team_partners),
-        #         team_specs[team_ix].agent_uids
-        #         ) for team_ix, team_partners in enumerate(partners)
-        # ]
-
-
-        
+        env_obsv_state = jax.vmap(env.reset, in_axes=(0, ))(rng_array)        
 
 
          # Scan over episodes
