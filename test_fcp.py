@@ -382,11 +382,11 @@ def _process_stage_1(config, rng):
     # -> take mean across environments
     # -> combine into cumulative sum
     cumulative_reward_per_update = jax.tree.map(
-        lambda x: jnp.cumsum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]), axis=-1)),
+        lambda x: jnp.cumsum(jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1)),
         s1_episode_metrics["reward"]
     )
     cumulative_delivered_dishes_per_update = jax.tree.map(
-        lambda x: jnp.cumsum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1)),
+        lambda x: jnp.cumsum(jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1)),
         s1_episode_metrics["reward"]
     )
     pickle_dump(
@@ -516,11 +516,11 @@ def _process_stage_2(config, rng):
     # -> take mean across environments
     # -> combine into cumulative sum
     cumulative_reward_per_update = jax.tree.map(
-        lambda x: jnp.cumsum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]), axis=-1)),
+        lambda x: jnp.cumsum(jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1)),
         s2_episode_metrics["reward"]
     )
     cumulative_delivered_dishes_per_update = jax.tree.map(
-        lambda x: jnp.cumsum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1)),
+        lambda x: jnp.cumsum(jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1)),
         s2_episode_metrics["reward"]
     )
     pickle_dump(
