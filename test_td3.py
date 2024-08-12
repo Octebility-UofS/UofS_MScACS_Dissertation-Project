@@ -3,7 +3,7 @@ import __main__
 import sys
 from datetime import datetime
 
-from util.util import LinePlot, pickle_dump
+from util.util import LinePlot, file_write, pickle_dump
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 ROOT_DIR = os.path.join('.', 'out', f"0_{__time}_{__script_name}")
@@ -155,11 +155,21 @@ def main(config):
     train_jit = jax.jit(make_train(config, _rng))
     stop_time = datetime.now()
     print(f"Jit Elapsed {stop_time-start_time}")
+    file_write(
+        os.path.join(ROOT_DIR, 'timing.csv'),
+        f"Jit Time, {stop_time-start_time}\n",
+        append=True
+    )
 
     start_time = datetime.now()
     res = train_jit(rng)
     stop_time = datetime.now()
     print(f"Training Elapsed {stop_time-start_time}")
+    file_write(
+        os.path.join(ROOT_DIR, 'timing.csv'),
+        f"Run Time, {stop_time-start_time}\n",
+        append=True
+    )
 
     metrics_y_actor_loss = np.array(res['metrics']['loss']['actor_loss'])
     # get how many non-nan values
