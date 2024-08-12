@@ -185,7 +185,8 @@ def _make_update_step(
         for team_ix, team_partners in enumerate(partners):
             metrics["reward"][team_ix] = {}
             for p_ix, partner in enumerate(team_partners):
-                metrics["reward"][team_ix][p_ix] = trajectories[team_ix][p_ix].reward# jnp.mean(trajectories[team_ix][p_ix].reward)
+                # Sum the reward for all environment steps in this episode in order to save some memory
+                metrics["reward"][team_ix][p_ix] = jnp.sum(trajectories[team_ix][p_ix].reward, axis=0)
 
 
         # Update each agent given their trajectories
