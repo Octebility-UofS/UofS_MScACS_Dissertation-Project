@@ -356,32 +356,33 @@ def _process_stage_1(config, rng):
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_1.prof'))
 
-    # Don't save this because the file is gigantic >10 GB on large runs
-    # with open(os.path.join(DATA_DIR, 'stage-1_reward-metrics.pkl'), 'wb') as f:
-    #     pickle.dump(s1_episode_metrics["reward"], f)
 
-    flattened_cumulative_reward = jax.tree.map(
-        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
+    # -> Reshape to put combine episodes and update steps
+    # -> take mean across environments
+    # -> sum reward for all environment steps per update
+    # -> combine into cumulative sum
+    cumulative_reward_per_update = jax.tree.map(
+        lambda x: jnp.cumsum(jnp.sum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]), axis=-1), axis=-1)),
         s1_episode_metrics["reward"]
     )
-    flattened_cumulative_dishes = jax.tree.map(
-        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
+    cumulative_delivered_dishes_per_update = jax.tree.map(
+        lambda x: jnp.cumsum(jnp.sum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1), axis=-1)),
         s1_episode_metrics["reward"]
     )
     pickle_dump(
         os.path.join(DATA_DIR, 'stage-1_cumulative-reward.pkl'),
-        flattened_cumulative_reward
+        cumulative_reward_per_update
     )
     pickle_dump(
         os.path.join(DATA_DIR, 'stage-1_cumulative-delivered-dishes.pkl'),
-        flattened_cumulative_dishes
+        cumulative_delivered_dishes_per_update
     )
     reward_plot = LinePlot("Environment Step", "Cumulative Mean Reward")
     dishes_plot = LinePlot("Environment Step", "Cumulative Mean Dishes Delivered")
-    for team_ix, team_rewards in flattened_cumulative_reward.items():
+    for team_ix, team_rewards in cumulative_reward_per_update.items():
         for p_ix, partner_rewards in team_rewards.items():
             reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
-    for team_ix, team_dishes in flattened_cumulative_dishes.items():
+    for team_ix, team_dishes in cumulative_delivered_dishes_per_update.items():
         for p_ix, partner_dishes in team_dishes.items():
             dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
     reward_plot.save(os.path.join(ROOT_DIR, "stage-1_cumulative-mean-reward-per-partner.png"))
@@ -490,31 +491,35 @@ def _process_stage_2(config, rng):
     # os.makedirs(__profile_dir, exist_ok=True)
     # jax.profiler.save_device_memory_profile(os.path.join(__profile_dir, 'mem_stage_2.prof'))
 
-    flattened_cumulative_reward = jax.tree.map(
-        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(x, axis=-1)))),
+    # -> Reshape to put combine episodes and update steps
+    # -> take mean across environments
+    # -> sum reward for all environment steps per update
+    # -> combine into cumulative sum
+    cumulative_reward_per_update = jax.tree.map(
+        lambda x: jnp.cumsum(jnp.sum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]), axis=-1), axis=-1)),
         s2_episode_metrics["reward"]
     )
-    flattened_cumulative_dishes = jax.tree.map(
-        (lambda x: jnp.cumsum(jnp.ravel(jnp.mean(jnp.isclose(x, DELIVERY_REWARD), axis=-1)))),
+    cumulative_delivered_dishes_per_update = jax.tree.map(
+        lambda x: jnp.cumsum(jnp.sum(jnp.mean(x.reshape((config["NUM_EPISODES"]*config["NUM_UPDATES"], ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1), axis=-1)),
         s2_episode_metrics["reward"]
     )
     pickle_dump(
         os.path.join(DATA_DIR, 'stage-2_cumulative-reward.pkl'),
-        flattened_cumulative_reward
+        cumulative_reward_per_update
     )
     pickle_dump(
         os.path.join(DATA_DIR, 'stage-2_cumulative-delivered-dishes.pkl'),
-        flattened_cumulative_dishes
+        cumulative_delivered_dishes_per_update
     )
     reward_plot = LinePlot("Environment Step", "Cumulative Mean Reward")
     dishes_plot = LinePlot("Environment Step", "Cumulative Mean Dishes Delivered")
-    for team_ix, team_rewards in flattened_cumulative_reward.items():
+    for team_ix, team_rewards in cumulative_reward_per_update.items():
         for p_ix, partner_rewards in team_rewards.items():
             if p_ix == 0 and team_fcp_agents[team_ix]:
                 reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-fcp", alpha=1.0)
             else:
                 reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.2)
-    for team_ix, team_dishes in flattened_cumulative_dishes.items():
+    for team_ix, team_dishes in cumulative_delivered_dishes_per_update.items():
         for p_ix, partner_dishes in team_dishes.items():
             if p_ix == 0 and team_fcp_agents[team_ix]:
                 dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-fcp", alpha=1.0)
