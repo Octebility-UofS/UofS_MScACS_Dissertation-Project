@@ -65,37 +65,57 @@ import optax
 
 from ficticious_coplay.fcp import FCP, EnvSpec, TeamSpec
 
-
-class SimpleNetwork(nn.Module):
+class OvercookedMLPActorCritic(nn.Module):
     output_dim: Sequence[int] # action_space_dim
-    activation = "relu"
 
     @nn.compact
     def __call__(self, x):
-        if self.activation == "relu":
-            activation = nn.relu
-        else:
-            raise ValueError(f"Activation function for '{self.activation}' is not defined")
-        x = nn.Dense(32, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
-        x = activation(x)
+        actor_mean = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        actor_mean = nn.relu(actor_mean)
+        actor_mean = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(actor_mean)
+        actor_mean = nn.relu(actor_mean)
+        actor_mean = nn.Dense(self.action_dim, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(actor_mean)
+        pi = distrax.Categorical(logits=actor_mean)
 
-        pi_logits = x
-        pi_logits = nn.Dense(self.output_dim, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(pi_logits)
-        pi = distrax.Categorical(logits=pi_logits)
-
-        value = x
-        value = nn.Dense(8, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(value)
-        value = activation(value)
+        value = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+        value = nn.relu(value)
+        value = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(value)
+        value = nn.relu(value)
         value = nn.Dense(1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(value)
-        value_squeezed = jnp.squeeze(value, axis=-1)
 
-        return pi, value_squeezed
+        return pi, jnp.squeeze(value, axis=-1)
+
+
+# class SimpleNetwork(nn.Module):
+#     output_dim: Sequence[int] # action_space_dim
+#     activation = "relu"
+
+#     @nn.compact
+#     def __call__(self, x):
+#         if self.activation == "relu":
+#             activation = nn.relu
+#         else:
+#             raise ValueError(f"Activation function for '{self.activation}' is not defined")
+#         x = nn.Dense(32, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
+#         x = activation(x)
+
+#         pi_logits = x
+#         pi_logits = nn.Dense(self.output_dim, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(pi_logits)
+#         pi = distrax.Categorical(logits=pi_logits)
+
+#         value = x
+#         value = nn.Dense(8, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(value)
+#         value = activation(value)
+#         value = nn.Dense(1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(value)
+#         value_squeezed = jnp.squeeze(value, axis=-1)
+
+#         return pi, value_squeezed
     
 
 
 def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env, checkpoint_prefix):
     _save_format_step = len(str(int((config["NUM_EPISODES"]*config["NUM_UPDATES"])-1)))
-    network = SimpleNetwork(env.action_space().n)
+    network = OvercookedMLPActorCritic(env.action_space().n)
     init_x = jnp.zeros(env.observation_space().shape)
     init_x = init_x.flatten()
     init_rng, _rng = jax.random.split(init_rng)
