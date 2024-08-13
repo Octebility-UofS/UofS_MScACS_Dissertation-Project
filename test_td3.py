@@ -90,7 +90,7 @@ def _make_update_step(config, env):
             length=config["REPLAY_ENV_STEPS"]
         )
 
-        cumulative_mean_reward = jax.tree.map(
+        mean_reward = jax.tree.map(
             lambda x: jnp.mean(jnp.sum(x, axis=0)),
             rewards
         )
@@ -101,7 +101,7 @@ def _make_update_step(config, env):
         train_states, loss_info = make_td3_update(config)(_rng, train_states, traj_buffer)
 
         runner_state = (train_states, env_state, last_obs, update_count, rng)
-        return runner_state, {"loss": loss_info, "reward": cumulative_mean_reward}
+        return runner_state, {"loss": loss_info, "reward": mean_reward}
     return _update_step
 
 def make_train(config, rng_init):
@@ -180,11 +180,10 @@ def main(config):
 
     y_critic_loss = np.mean(res['metrics']['loss']['critic_loss'], axis=1)
 
-    plt.plot(np.arange(y_critic_loss.shape[0]), y_critic_loss, label="Critic Loss")
-    plt.plot(np.arange(y_actor_loss.shape[0]), y_actor_loss, label="Actor Loss")
-    plt.legend()
-    plt.savefig(os.path.join(ROOT_DIR, "train_loss.png"))
-    plt.close()
+    loss_plot = LinePlot("Update Step", "Loss")
+    loss_plot.add(np.arange(y_critic_loss.shape[0]), y_critic_loss, label="Critic Loss")
+    loss_plot.add(np.arange(y_actor_loss.shape[0]), y_actor_loss, label="Actor Loss")
+    loss_plot.save(os.path.join(ROOT_DIR, "train_loss.png"))
 
     pickle_dump(
         os.path.join(DATA_DIR, 'mean-reward.pkl'),

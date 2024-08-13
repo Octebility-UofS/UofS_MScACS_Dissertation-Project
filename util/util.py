@@ -64,7 +64,7 @@ class LinePlot:
     def save(self, save_path: str):
         if self.has_labels:
             self.ax.legend()
-        self.fig.savefig(save_path)
+        self.fig.savefig(save_path, bbox_inches='tight')
         plt.close(self.fig)
         
 
@@ -80,5 +80,5 @@ class HeatMatrix:
         self.ax.set_yticks(np.arange(len(ylabels)), labels=ylabels)
 
     def save(self, save_path: str):
-        self.fig.savefig(save_path)
+        self.fig.savefig(save_path, bbox_inches='tight')
         plt.close(self.fig)
