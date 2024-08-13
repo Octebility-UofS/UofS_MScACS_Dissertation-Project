@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import jaxmarl
 import numpy as np
 
-from ficticious_coplay.common import EnvSpec, TeamSpec, _make_episode
+from ficticious_coplay.common import EnvSpec, TeamSpec, _make_episode, transform_env_partner, untransform_env_partner
 from util.util import rec_frozenset
 
 
@@ -11,9 +11,7 @@ def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec]):
     np_rng = np.random.default_rng(config["NUMPY_SEED"])
 
     # Split the environment instances up into evenly sized ranges
-    # For each agent in each team, ranges are randomly assigned for each partner instance
-    # This vastly simplifies the complexity of transforming observations
-    # While still keeping an element of randomness
+    # We are implementing 'true' self play so in each team, each policy is only trained against itself
     env_instance_count = env_spec.count
     map_agent_uid_to_partner_instance = dict()
     for (team_ix, team_spec) in enumerate(teams):
@@ -23,12 +21,10 @@ def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec]):
         # according to number of partners and environments
         slice_ixs = np.linspace(0, env_instance_count, partner_count+1, dtype=int)
         for agent_id in team_spec.agent_uids:
-            # get a random permutation of assigning partner instances to slices
-            partner_instance_permutation = np_rng.permutation(np.arange(partner_count))
-            for ix, partner_ix in enumerate(partner_instance_permutation):
-                if partner_ix not in map_agent_uid_to_partner_instance[team_ix]:
-                    map_agent_uid_to_partner_instance[team_ix][partner_ix] = dict()
-                map_agent_uid_to_partner_instance[team_ix][partner_ix][agent_id] = (slice_ixs[ix], slice_ixs[ix+1])
+            for p_ix in range(partner_count):
+                if p_ix not in map_agent_uid_to_partner_instance[team_ix]:
+                    map_agent_uid_to_partner_instance[team_ix][p_ix] = dict()
+                map_agent_uid_to_partner_instance[team_ix][p_ix][agent_id] = (slice_ixs[p_ix], slice_ixs[p_ix+1])
         # Convert dict of agent id's to slices into a list sorted by agent id
         for partner_ix, agent_mapping in map_agent_uid_to_partner_instance[team_ix].items():
             map_agent_uid_to_partner_instance[team_ix][partner_ix] = [
