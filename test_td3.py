@@ -171,6 +171,31 @@ def main(config):
         append=True
     )
 
+
+    (
+        state_actor,
+        state_actor_target,
+        state_critic,
+        state_critic_target
+    ) = res["runner_state"][0]
+    pickle_dump(
+        os.path.join(CHECKPOINT_DIR, 'final_state_actor.ckpt'),
+        state_actor
+    )
+    pickle_dump(
+        os.path.join(CHECKPOINT_DIR, 'final_state_actor_target.ckpt'),
+        state_actor_target
+    )
+    pickle_dump(
+        os.path.join(CHECKPOINT_DIR, 'final_state_critic.ckpt'),
+        state_critic
+    )
+    pickle_dump(
+        os.path.join(CHECKPOINT_DIR, 'final_state_critic_target.ckpt'),
+        state_critic_target
+    )
+        
+
     metrics_y_actor_loss = np.array(res['metrics']['loss']['actor_loss'])
     # get how many non-nan values
     y_actor_loss = np.empty((metrics_y_actor_loss.shape[0], ))
