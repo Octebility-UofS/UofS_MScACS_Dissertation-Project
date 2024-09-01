@@ -378,7 +378,6 @@ def _process_stage_1(config, rng):
 
     # -> Reshape to put combine episodes and update steps
     # -> take mean across environments
-    # -> combine into cumulative sum
     mean_reward_per_update = jax.tree.map(
         lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
         s1_episode_metrics["reward"]["sum"]
@@ -513,7 +512,6 @@ def _process_stage_2(config, rng):
 
     # -> Reshape to put combine episodes and update steps
     # -> take mean across environments
-    # -> combine into cumulative sum
     mean_reward_per_update = jax.tree.map(
         lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
         s2_episode_metrics["reward"]["sum"]
