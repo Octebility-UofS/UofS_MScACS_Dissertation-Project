@@ -164,7 +164,8 @@ def _make_update_step(
     map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]],
     reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]],
     env_spec: EnvSpec, teams: list[TeamSpec], env,
-    partners: list[list[SelfPlayAgent]]
+    partners: list[list[SelfPlayAgent]],
+    reward_milestone_map: dict[str, int] # Allows us to count the occurence of specific 'milestones' that are attached to a unique reward value
     ):
     @jax.jit
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):        
@@ -181,12 +182,20 @@ def _make_update_step(
         )
 
         # Log the reward for each agent policy
-        metrics["reward"] = {}
+        metrics["reward"] = {
+            "sum": {},
+            "dishes": {}
+        }
         for team_ix, team_partners in enumerate(partners):
-            metrics["reward"][team_ix] = {}
+            metrics["reward"]["sum"][team_ix] = {}
+            for milestone, value in reward_milestone_map.items():
+                metrics["reward"][milestone][team_ix] = {}
+            
             for p_ix, partner in enumerate(team_partners):
                 # Sum the reward for all environment steps in this episode in order to save some memory
-                metrics["reward"][team_ix][p_ix] = jnp.sum(trajectories[team_ix][p_ix].reward, axis=0)
+                metrics["reward"]["sum"][team_ix][p_ix] = jnp.sum(trajectories[team_ix][p_ix].reward, axis=0)
+                for milestone, value in reward_milestone_map.items():
+                    metrics["reward"][milestone][team_ix][p_ix] = jnp.sum(trajectories[team_ix][p_ix].reward == value, axis=0)
 
 
         # Update each agent given their trajectories
@@ -218,7 +227,8 @@ def _make_update_step(
 def _make_episode(
     config, env_spec: EnvSpec, teams: list[TeamSpec], env, partners,
     map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]],
-    reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
+    reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]],
+    reward_milestone_map: dict[str, int] # Allows us to count the occurence of specific 'milestones' that are attached to a unique reward value
     ):
     @jax.jit
     def _episode(runner_episode, counter):
@@ -232,7 +242,8 @@ def _make_episode(
                     config,
                     map_agent_uid_to_partner_instance,
                     reverse_map_agent_uid_to_partner_instance,
-                    env_spec, teams, env, partners
+                    env_spec, teams, env, partners,
+                    reward_milestone_map
                     ),
                 runner_state,
                 counter*config["NUM_UPDATES"] + jnp.arange(0, config["NUM_UPDATES"]), # Keep track of individual update step counter

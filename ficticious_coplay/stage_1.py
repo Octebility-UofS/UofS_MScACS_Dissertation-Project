@@ -57,7 +57,10 @@ def _generate_mappings(config, env_spec: EnvSpec, teams: list[TeamSpec]):
     )
 
 
-def make_stage_1(config, init_rng: jax.dtypes.prng_key, env_spec: EnvSpec, teams: list[TeamSpec]):
+def make_stage_1(
+        config, init_rng: jax.dtypes.prng_key, env_spec: EnvSpec, teams: list[TeamSpec],
+        metric_reward_milestone_map: dict[str, int] # Allows us to count the occurence of specific 'milestones' that are attached to a unique reward value
+    ):
 
     env = jaxmarl.make(env_spec.env_id, **env_spec.env_kwargs)
 
@@ -97,7 +100,8 @@ def make_stage_1(config, init_rng: jax.dtypes.prng_key, env_spec: EnvSpec, teams
             _make_episode(
                 config, env_spec, teams, env, partners,
                 map_agent_uid_to_partner_instance,
-                reverse_map_agent_uid_to_partner_instance
+                reverse_map_agent_uid_to_partner_instance,
+                metric_reward_milestone_map
                 ),
             episode_runner_state,
             jnp.arange(0, config["NUM_EPISODES"]), # Used to keep track of saved network parameters

@@ -349,7 +349,7 @@ def _process_stage_1(config, rng):
     rng, init_rng = jax.random.split(rng)
     rng, _rng = jax.random.split(rng)
     start_time = datetime.now()
-    stage_1_jit = FCP.make_stage_1(config, init_rng, env_spec, teams)
+    stage_1_jit = FCP.make_stage_1(config, init_rng, env_spec, teams, {"dishes": DELIVERY_REWARD})
     stop_time = datetime.now()
     s1_time_jit = stop_time - start_time
     print(f"\nStage 1 Jit {s1_time_jit}")
@@ -381,11 +381,11 @@ def _process_stage_1(config, rng):
     # -> combine into cumulative sum
     mean_reward_per_update = jax.tree.map(
         lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
-        s1_episode_metrics["reward"]
+        s1_episode_metrics["reward"]["sum"]
     )
     mean_delivered_dishes_per_update = jax.tree.map(
-        lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1),
-        s1_episode_metrics["reward"]
+        lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
+        s1_episode_metrics["reward"]["dishes"]
     )
     pickle_dump(
         os.path.join(DATA_DIR, 'stage-1_mean-reward.pkl'),
@@ -490,7 +490,8 @@ def _process_stage_2(config, rng):
     stage_2_jit = FCP.make_stage_2(
         config, init_rng, env_spec, teams,
         team_fcp_agents,
-        load_steps
+        load_steps,
+        {"dishes": DELIVERY_REWARD}
         )
     stop_time = datetime.now()
     s2_time_jit = stop_time - start_time
@@ -515,11 +516,11 @@ def _process_stage_2(config, rng):
     # -> combine into cumulative sum
     mean_reward_per_update = jax.tree.map(
         lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
-        s2_episode_metrics["reward"]
+        s2_episode_metrics["reward"]["sum"]
     )
     mean_delivered_dishes_per_update = jax.tree.map(
         lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1),
-        s2_episode_metrics["reward"]
+        s2_episode_metrics["reward"]["dishes"]
     )
     pickle_dump(
         os.path.join(DATA_DIR, 'stage-2_mean-reward.pkl'),
@@ -536,13 +537,13 @@ def _process_stage_2(config, rng):
             if p_ix == 0 and team_fcp_agents[team_ix]:
                 reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-fcp", alpha=1.0)
             else:
-                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.2)
+                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.1)
     for team_ix, team_dishes in mean_delivered_dishes_per_update.items():
         for p_ix, partner_dishes in team_dishes.items():
             if p_ix == 0 and team_fcp_agents[team_ix]:
                 dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-fcp", alpha=1.0)
             else:
-                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, alpha=0.2)
+                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, alpha=0.1)
     reward_plot.save(os.path.join(ROOT_DIR, "stage-2_mean-reward-per-partner.png"))
     dishes_plot.save(os.path.join(ROOT_DIR, "stage-2_mean-dishes-per-partner.png"))
 
