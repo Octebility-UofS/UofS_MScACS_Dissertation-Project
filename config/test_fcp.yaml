@@ -7,8 +7,8 @@
 "NUM_MINIBATCHES": 1
 "NUM_CHECKPOINTS": 10
 
-"ROLLOUT_STEPS": 2
-"ROLLOUT_NUM_ENVS": 1
+"ROLLOUT_STEPS": 300
+"ROLLOUT_NUM_ENVS": 50
 
 "ANNEAL_LR": True
 "MAX_GRAD_NORM": 0.5
@@ -21,14 +21,14 @@
 
 "ENV":
   "ID": "overcooked"
-  "COUNT": 32
+  "COUNT": 200
   "KWARGS":
     "layout": "cramped_room"
 
 "TEAMS":
   "0":
     "CLS_AGENT": "make_ppo_agent"
-    "AGENT_COUNT": 2
+    "AGENT_COUNT": 8
     "AGENT_IDS": ["agent_0", "agent_1"]
 
 "FCP_AGENTS":
