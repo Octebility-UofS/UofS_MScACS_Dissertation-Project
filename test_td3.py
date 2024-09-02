@@ -179,20 +179,20 @@ def main(config):
         state_critic_target
     ) = res["runner_state"][0]
     pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_actor.ckpt'),
-        state_actor
+        os.path.join(CHECKPOINT_DIR, 'final_state_actor_params.ckpt'),
+        state_actor.params
     )
     pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_actor_target.ckpt'),
-        state_actor_target
+        os.path.join(CHECKPOINT_DIR, 'final_state_actor_target_params.ckpt'),
+        state_actor_target.params
     )
     pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_critic.ckpt'),
-        state_critic
+        os.path.join(CHECKPOINT_DIR, 'final_state_critic_params.ckpt'),
+        state_critic.params
     )
     pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_critic_target.ckpt'),
-        state_critic_target
+        os.path.join(CHECKPOINT_DIR, 'final_state_critic_target_params.ckpt'),
+        state_critic_target.params
     )
         
 
