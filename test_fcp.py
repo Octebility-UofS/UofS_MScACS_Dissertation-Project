@@ -1,19 +1,12 @@
 
 from itertools import combinations, permutations
 import os
-# Recommended XLA flags for improving gpu performance
-# https://jax.readthedocs.io/en/latest/gpu_performance_tips.html#xla-performance-flags
-#os.environ['XLA_FLAGS'] = (
-#    '--xla_gpu_enable_triton_softmax_fusion=true '
-#    '--xla_gpu_triton_gemm_any=True '
-    # '--xla_gpu_enable_async_collectives=true '
-    # '--xla_gpu_enable_latency_hiding_scheduler=true '
-    # '--xla_gpu_enable_highest_priority_async_stream=true '
-#)
-#os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']= 'false'
+import sys
+if "BACKEND=cpu" in sys.argv or "+BACKEND=cpu" in sys.argv:
+    os.environ["JAX_PLATFORMS"] = "cpu"
 
 import __main__
-import sys
+
 from datetime import datetime
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -46,9 +39,7 @@ from util.util import HeatMatrix, LinePlot, file_write, nary_sequences, pickle_d
 
 
 import jax
-if "BACKEND=cpu" in sys.argv or "+BACKEND=cpu" in sys.argv:
-    jax.config.update('jax_platform_name', "cpu")
-    print(jax.devices())
+print(jax.devices())
 
 import pickle
 from typing import Sequence
