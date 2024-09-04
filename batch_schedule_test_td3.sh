@@ -1,3 +1,5 @@
+sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e1 NUM_UPDATES=1e1 POLICY_FREQ=2
+sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e1 POLICY_FREQ=2
 sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e2 POLICY_FREQ=2
 sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e2 POLICY_FREQ=4
 sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e2 POLICY_FREQ=6

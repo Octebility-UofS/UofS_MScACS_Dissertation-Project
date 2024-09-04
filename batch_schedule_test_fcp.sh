@@ -1,3 +1,5 @@
+sbatch --time=02:00:00 job_schedule.sh test_fcp.py ENV_STEPS=1e1 NUM_UPDATES=1e1 NUM_CHECKPOINTS=10
+sbatch --time=02:00:00 job_schedule.sh test_fcp.py ENV_STEPS=1e2 NUM_UPDATES=1e1 NUM_CHECKPOINTS=10
 sbatch --time=02:00:00 job_schedule.sh test_fcp.py ENV_STEPS=1e2 NUM_UPDATES=1e2 NUM_CHECKPOINTS=10
 sbatch --time=04:00:00 job_schedule.sh test_fcp.py ENV_STEPS=1e3 NUM_UPDATES=1e2 NUM_CHECKPOINTS=10
 sbatch --time=12:00:00 job_schedule.sh test_fcp.py ENV_STEPS=1e3 NUM_UPDATES=1e3 NUM_CHECKPOINTS=10
