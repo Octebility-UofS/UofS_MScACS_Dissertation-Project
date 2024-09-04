@@ -46,6 +46,9 @@ from util.util import HeatMatrix, LinePlot, file_write, nary_sequences, pickle_d
 
 
 import jax
+if "BACKEND=cpu" in sys.argv or "+BACKEND=cpu" in sys.argv:
+    jax.config.update('jax_platform_name', "cpu")
+    print(jax.devices())
 
 import pickle
 from typing import Sequence
