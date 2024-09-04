@@ -408,25 +408,16 @@ def _process_stage_1(config, rng):
     
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
+    # print(total_update_steps)
+    # print(jax.tree.map(lambda x: x.shape, s1_episode_metrics["update_metrics"]))
+    # print(jax.tree.map(lambda x: x.shape, jax.tree.map(lambda x: x.reshape((total_update_steps, ) + x.shape[2:]), s1_episode_metrics["update_metrics"])))
     flattened_loss = jax.tree.map(
-        (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
+        lambda x: jnp.mean(x.reshape((total_update_steps, -1)), axis=1),
         s1_episode_metrics["update_metrics"]
-        )
-    pickle_dump(
-        os.path.join(DATA_DIR, 'stage-1_loss-total.pkl'),
-        jax.tree.map(lambda x: x[0], flattened_loss)
     )
     pickle_dump(
-        os.path.join(DATA_DIR, 'stage-1_loss-value.pkl'),
-        jax.tree.map(lambda x: x[1][0], flattened_loss)
-    )
-    pickle_dump(
-        os.path.join(DATA_DIR, 'stage-1_loss-actor.pkl'),
-        jax.tree.map(lambda x: x[1][1], flattened_loss)
-    )
-    pickle_dump(
-        os.path.join(DATA_DIR, 'stage-1_loss-entropy.pkl'),
-        jax.tree.map(lambda x: x[1][2], flattened_loss)
+        os.path.join(DATA_DIR, 'stage-1_loss.pkl'),
+        flattened_loss
     )
 
     total_loss_plot = LinePlot("Update Step", "Total Loss")
@@ -548,25 +539,12 @@ def _process_stage_2(config, rng):
 
     total_update_steps = int(config["NUM_UPDATES"] * config["NUM_EPISODES"])
     flattened_loss = jax.tree.map(
-        (lambda x: jnp.mean(x, axis=2).reshape((total_update_steps, ) + x.shape[2:])),
+        lambda x: jnp.mean(x.reshape((total_update_steps, -1)), axis=1),
         s2_episode_metrics["update_metrics"]
-        )
-
-    pickle_dump(
-        os.path.join(DATA_DIR, 'stage-2_loss-total.pkl'),
-        jax.tree.map(lambda x: x[0], flattened_loss)
     )
     pickle_dump(
-        os.path.join(DATA_DIR, 'stage-2_loss-value.pkl'),
-        jax.tree.map(lambda x: x[1][0], flattened_loss)
-    )
-    pickle_dump(
-        os.path.join(DATA_DIR, 'stage-2_loss-actor.pkl'),
-        jax.tree.map(lambda x: x[1][1], flattened_loss)
-    )
-    pickle_dump(
-        os.path.join(DATA_DIR, 'stage-2_loss-entropy.pkl'),
-        jax.tree.map(lambda x: x[1][2], flattened_loss)
+        os.path.join(DATA_DIR, 'stage-2_loss.pkl'),
+        flattened_loss
     )
 
     total_loss_plot = LinePlot("Update Step", "Total Loss")
