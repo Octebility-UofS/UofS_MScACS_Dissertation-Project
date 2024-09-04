@@ -1,8 +1,6 @@
 "JAX_SEED": 0
 "NUMPY_SEED": 0
 
-"ENV_DEVICE": "gpu"
-
 "NUM_EPISODES": 1
 "ENV_STEPS": 1e3
 "NUM_UPDATES": 1e3

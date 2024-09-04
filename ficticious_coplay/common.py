@@ -49,54 +49,49 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
-def _make_transform_env_partner(config):
-    @partial(jax.jit, static_argnames=['map_agent_uid_to_partner_instance',], device=jax.devices(config["ENV_DEVICE"])[0])
-    def transform_env_partner(
-        pytree,
-        map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]]
-        ):
-        transformed_mapping = dict()
-        for team_ix, partner_mapping in map_agent_uid_to_partner_instance:
-            transformed_mapping[team_ix] = dict()
-            for partner_ix, agent_mapping in partner_mapping:
-                transformed_mapping[team_ix][partner_ix] = jnp.concatenate(
-                    [ pytree[agent_id][s0: s1] for agent_id, (s0, s1) in agent_mapping ]
-                )
-        return transformed_mapping
-    return transform_env_partner
+@partial(jax.jit, static_argnames=['map_agent_uid_to_partner_instance',])
+def transform_env_partner(
+    pytree,
+    map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]]
+    ):
+    transformed_mapping = dict()
+    for team_ix, partner_mapping in map_agent_uid_to_partner_instance:
+        transformed_mapping[team_ix] = dict()
+        for partner_ix, agent_mapping in partner_mapping:
+            transformed_mapping[team_ix][partner_ix] = jnp.concatenate(
+                [ pytree[agent_id][s0: s1] for agent_id, (s0, s1) in agent_mapping ]
+            )
+    return transformed_mapping
 
-def _make_untransform_env_partner(config):
-    @partial(jax.jit, static_argnames=['reverse_map_agent_uid_to_partner_instance',], device=jax.devices(config["ENV_DEVICE"])[0])
-    def untransform_env_partner(
-        transformed_mapping,
-        reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
-        ):
-        pytree = dict()
-        for team_ix, agent_mapping in reverse_map_agent_uid_to_partner_instance:
-            for agent_id, partner_mapping in agent_mapping:
-                # We don't need to worry about other teams as we explictly assign each agent to exactly one team
-                pytree[agent_id] = jnp.concatenate(
-                    [ transformed_mapping[team_ix][partner_ix][s0: s1] for _, (partner_ix, (s0, s1)) in partner_mapping ]
-                )
-        return pytree
-    return untransform_env_partner
+@partial(jax.jit, static_argnames=['reverse_map_agent_uid_to_partner_instance',])
+def untransform_env_partner(
+    transformed_mapping,
+    reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
+    ):
+    pytree = dict()
+    for team_ix, agent_mapping in reverse_map_agent_uid_to_partner_instance:
+        for agent_id, partner_mapping in agent_mapping:
+            # We don't need to worry about other teams as we explictly assign each agent to exactly one team
+            pytree[agent_id] = jnp.concatenate(
+                [ transformed_mapping[team_ix][partner_ix][s0: s1] for _, (partner_ix, (s0, s1)) in partner_mapping ]
+            )
+    return pytree
 
     
 
 def _make_envs_step(
-    config,
     map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]],
     reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]],
     env_spec: EnvSpec, env,
     partners: list[list[SelfPlayAgent]]
     ):
-    @partial(jax.jit, device=jax.devices(config["ENV_DEVICE"])[0])
+    @jax.jit
     def _envs_step(runner_state, _):
         env_obsv_state, partner_states, rng = runner_state
 
         # Transform all observation vectors to group them by partner agents
         env_obsv, env_state = env_obsv_state
-        transformed_observations = _make_transform_env_partner(config)(env_obsv, map_agent_uid_to_partner_instance)
+        transformed_observations = transform_env_partner(env_obsv, map_agent_uid_to_partner_instance)
 
 
         # Run each transformed stack of observations through their respective parntner agents
@@ -127,7 +122,7 @@ def _make_envs_step(
 
 
         # Reverse the process with the stacked actions to use them for stepping the environments
-        env_act = _make_untransform_env_partner(config)(tree_partner_actions, reverse_map_agent_uid_to_partner_instance)
+        env_act = untransform_env_partner(tree_partner_actions, reverse_map_agent_uid_to_partner_instance)
         
         #STEP ENVIRONMENTS
         env_obsv, env_state = env_obsv_state
@@ -140,8 +135,8 @@ def _make_envs_step(
 
         # COLLECT TRANSITIONS FOR EACH AGENT
         # Will be later passed to update functions for each agent
-        transformed_reward = _make_transform_env_partner(config)(reward, map_agent_uid_to_partner_instance)
-        transformed_done = _make_transform_env_partner(config)(done, map_agent_uid_to_partner_instance)
+        transformed_reward = transform_env_partner(reward, map_agent_uid_to_partner_instance)
+        transformed_done = transform_env_partner(done, map_agent_uid_to_partner_instance)
 
         agent_transitions = []
         for team_ix in range(len(partners)):
@@ -172,14 +167,13 @@ def _make_update_step(
     partners: list[list[SelfPlayAgent]],
     reward_milestone_map: dict[str, int] # Allows us to count the occurence of specific 'milestones' that are attached to a unique reward value
     ):
-    @partial(jax.jit, device=jax.devices(config["ENV_DEVICE"])[0])
+    @jax.jit
     def _update_step(runner_state: tuple[Any, Any, list[SelfPlayAgent], list[int], Any], save_counter):        
         metrics = {}
 
         # Collect Trajectories
         runner_state, trajectories = jax.lax.scan(
             _make_envs_step(
-                config,
                 map_agent_uid_to_partner_instance,
                 reverse_map_agent_uid_to_partner_instance,
                 env_spec, env, partners),
@@ -236,7 +230,7 @@ def _make_episode(
     reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]],
     reward_milestone_map: dict[str, int] # Allows us to count the occurence of specific 'milestones' that are attached to a unique reward value
     ):
-    @partial(jax.jit, device=jax.devices(config["ENV_DEVICE"])[0])
+    @jax.jit
     def _episode(runner_episode, counter):
         env_obsv_state, partner_states, rng = runner_episode
 
