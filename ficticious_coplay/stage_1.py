@@ -3,7 +3,7 @@ import jax.numpy as jnp
 import jaxmarl
 import numpy as np
 
-from ficticious_coplay.common import EnvSpec, TeamSpec, _make_episode, transform_env_partner, untransform_env_partner
+from ficticious_coplay.common import EnvSpec, TeamSpec, _make_episode
 from util.util import rec_frozenset
 
 
