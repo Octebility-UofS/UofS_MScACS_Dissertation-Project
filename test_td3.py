@@ -1,6 +1,9 @@
 import os
-import __main__
 import sys
+if "BACKEND=cpu" in sys.argv or "+BACKEND=cpu" in sys.argv:
+    os.environ["JAX_PLATFORMS"] = "cpu"
+
+import __main__
 from datetime import datetime
 
 from util.util import LinePlot, file_write, pickle_dump
@@ -30,6 +33,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 import hydra
 import numpy as np
 import jax
+print(jax.devices())
 import jax.numpy as jnp
 from brax.io import html
 import jaxmarl
