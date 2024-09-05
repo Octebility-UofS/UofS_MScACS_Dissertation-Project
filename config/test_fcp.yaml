@@ -35,6 +35,8 @@
   - "make_ppo_agent"
 
 
+"RESUME": -1
+
 "Comment":
   - "This version of FCP implements 'true' selfplay by only training each policy against each itself for each team"
   - "The second fcp stage then works as previously"

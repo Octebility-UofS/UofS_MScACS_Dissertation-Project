@@ -17,6 +17,16 @@ if __name__ == "__main__":
         _arg_dirpath = sys.argv.pop(arg_ix).replace("hydra.run.dir=", "")
         ROOT_DIR = os.path.join('.', 'out', _arg_dirpath + f"_{__script_name}")
         sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+    elif any([ arg.startswith("RESUME=") for arg in sys.argv ]):
+        _job_id_arg_ixs = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ]
+        if _job_id_arg_ixs:
+            sys.argv.pop(_job_id_arg_ixs[0])
+        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("RESUME=") ][0]
+        _arg_resume_job_id = sys.argv[arg_ix].replace("RESUME=", "")
+        resume_dir = [ d for d in os.listdir(os.path.join('.', 'out')) if d.startswith(_arg_resume_job_id) ][0]
+        assert resume_dir.endswith(__script_name)
+        ROOT_DIR = os.path.join('.', 'out', resume_dir)
+        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
     elif any([ arg.startswith("JOB_ID=") for arg in sys.argv ]):
         arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ][0]
         _arg_job_id = sys.argv.pop(arg_ix).replace("JOB_ID=", "")
@@ -675,10 +685,12 @@ def main(config):
 
 
     rng, _rng = jax.random.split(rng)
-    _process_stage_1(config, _rng)
+    if config["RESUME"] < 0 or "stage-1_loss-entropy.png" not in os.listdir(ROOT_DIR):
+        _process_stage_1(config, _rng)
 
     rng, _rng = jax.random.split(rng)
-    _process_stage_2(config, _rng)
+    if config["RESUME"] < 0 or "stage-2_loss-entropy.png" not in os.listdir(ROOT_DIR):
+        _process_stage_2(config, _rng)
 
     rng, _rng = jax.random.split(rng)
     _process_rollout(config, _rng)
