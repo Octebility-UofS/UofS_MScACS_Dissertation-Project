@@ -1,39 +1,51 @@
 
 from itertools import combinations, permutations
 import os
+import shutil
 import sys
-if "BACKEND=cpu" in sys.argv or "+BACKEND=cpu" in sys.argv:
-    os.environ["JAX_PLATFORMS"] = "cpu"
+
+def sys_argv_swallow(key):
+    lst_arg = [ (ix, arg) for ix, arg in enumerate(sys.argv) if arg.startswith(f"{key}=") ]
+    if len(lst_arg) == 0:
+        return False
+    elif len(lst_arg) == 1:
+        ix, arg = lst_arg[0]
+        sys.argv.pop(ix)
+        return arg.replace(f"{key}=", "")
+    else:
+        raise ValueError(f"You're only allowed to supply one argument with key {key}")
+
+
+if __name__ == "__main__":
+    backend_arg = sys_argv_swallow("BACKEND")
+    if backend_arg == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"        
 
 import __main__
 
 from datetime import datetime
 __script_name = ".".join(os.path.split(__main__.__file__)[1].split(".")[:-1])
 __time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-ROOT_DIR = os.path.join('.', 'out', f"0_{__time}_{__script_name}")
+ROOT_DIR = os.path.join('.', 'out', 'tmp', f"0_{__time}_{__script_name}")
 if __name__ == "__main__":
-    if any([ arg.startswith("hydra.run.dir=") for arg in sys.argv ]):
-        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("hydra.run.dir=") ][0]
-        _arg_dirpath = sys.argv.pop(arg_ix).replace("hydra.run.dir=", "")
-        ROOT_DIR = os.path.join('.', 'out', _arg_dirpath + f"_{__script_name}")
-        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
-    elif any([ arg.startswith("RESUME=") for arg in sys.argv ]):
-        _job_id_arg_ixs = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ]
-        if _job_id_arg_ixs:
-            sys.argv.pop(_job_id_arg_ixs[0])
-        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("RESUME=") ][0]
-        _arg_resume_job_id = sys.argv[arg_ix].replace("RESUME=", "")
-        resume_dir = [ d for d in os.listdir(os.path.join('.', 'out')) if d.startswith(_arg_resume_job_id) ][0]
-        assert resume_dir.endswith(__script_name)
-        ROOT_DIR = os.path.join('.', 'out', resume_dir)
-        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
-    elif any([ arg.startswith("JOB_ID=") for arg in sys.argv ]):
-        arg_ix = [ _ix for _ix, arg in enumerate(sys.argv) if arg.startswith("JOB_ID=") ][0]
-        _arg_job_id = sys.argv.pop(arg_ix).replace("JOB_ID=", "")
-        ROOT_DIR = os.path.join('.', 'out', f"{_arg_job_id}_{__time}_{__script_name}")
-        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+    out_path = sys_argv_swallow("OUT_PATH")
+    job_id = sys_argv_swallow("JOB_ID")
+    resume_id = sys_argv_swallow("RESUME")
+
+    if not out_path and not job_id:
+        raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
+    
+    if resume_id:
+        ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}-resume-{resume_id}")
+        old_dir = [ d for d in os.listdir(os.path.join('.', 'out', out_path)) if d.startswith(resume_id) ][0]
+        shutil.copytree(
+            os.path.join('.', 'out', out_path, old_dir),
+            os.path.join('.', 'out', out_path, f"{job_id}-resume-{resume_id}"),
+            ignore=lambda dirname, files: ["hydra"] if dirname.endswith(old_dir) else []
+        )
     else:
-        sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
+        ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
+    sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -685,11 +697,11 @@ def main(config):
 
 
     rng, _rng = jax.random.split(rng)
-    if config["RESUME"] < 0 or "stage-1_loss-entropy.png" not in os.listdir(ROOT_DIR):
+    if "stage-1_loss-entropy.png" not in os.listdir(ROOT_DIR):
         _process_stage_1(config, _rng)
 
     rng, _rng = jax.random.split(rng)
-    if config["RESUME"] < 0 or "stage-2_loss-entropy.png" not in os.listdir(ROOT_DIR):
+    if "stage-2_loss-entropy.png" not in os.listdir(ROOT_DIR):
         _process_stage_2(config, _rng)
 
     rng, _rng = jax.random.split(rng)
