@@ -8,10 +8,10 @@ schedule_cpu_test_fcp () {
 }
 
 
-schedule_cpu_test_fcp 02:00:00 1e1 1e1
-schedule_cpu_test_fcp 04:00:00 1e2 1e1
-schedule_cpu_test_fcp 08:00:00 1e2 1e2
-schedule_cpu_test_fcp 24:00:00 1e3 1e2
+schedule_cpu_test_fcp 10:00:00 1e1 1e1
+schedule_cpu_test_fcp 20:00:00 1e2 1e1
+schedule_cpu_test_fcp 48:00:00 1e2 1e2
+schedule_cpu_test_fcp 48:00:00 1e3 1e2
 schedule_cpu_test_fcp 48:00:00 1e3 1e3
 schedule_cpu_test_fcp 96:00:00 1e4 1e3
 schedule_cpu_test_fcp 96:00:00 1e4 1e4
