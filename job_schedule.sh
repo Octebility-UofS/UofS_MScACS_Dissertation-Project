@@ -27,3 +27,5 @@ which python >> $slurm_log 2>&1
 python -V >> $slurm_log 2>&1
 
 python $script "OUT_PATH=${out_path}" JOB_ID=$SLURM_JOB_ID "$@" >> $script_log 2>&1
+
+echo "Done." >> $slurm_log 2>&1
