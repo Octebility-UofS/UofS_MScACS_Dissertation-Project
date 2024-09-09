@@ -1,12 +1,20 @@
-sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e1 NUM_UPDATES=1e1 POLICY_FREQ=2
-sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e1 POLICY_FREQ=2
-sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e2 POLICY_FREQ=2
-sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e2 POLICY_FREQ=4
-sbatch --time=02:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e2 NUM_UPDATES=1e2 POLICY_FREQ=6
-sbatch --time=05:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e3 NUM_UPDATES=1e2 POLICY_FREQ=2
-sbatch --time=05:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e3 NUM_UPDATES=1e2 POLICY_FREQ=4
-sbatch --time=05:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e3 NUM_UPDATES=1e2 POLICY_FREQ=6
-sbatch --time=12:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e3 NUM_UPDATES=1e3 POLICY_FREQ=4
-sbatch --time=24:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e4 NUM_UPDATES=1e3 POLICY_FREQ=4
-sbatch --time=96:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e3 NUM_UPDATES=1e5 POLICY_FREQ=4
-sbatch --time=96:00:00 job_schedule.sh test_td3.py REPLAY_ENV_STEPS=1e3 NUM_UPDATES=1e7 POLICY_FREQ=4
+schedule_test_td3 () {
+    local time=$1
+    local env_steps=$2
+    local update_steps=$3
+    local p_freq=$4
+    sbatch --time=$time --output="out/td3/gpu/${env_steps}-${update_steps}/%j_slurm_log.out" job_schedule.sh "td3/gpu/${env_steps}-${update_steps}" test_td3.py REPLAY_ENV_STEPS=$env_steps NUM_UPDATES=$update_steps POLICY_FREQ=$p_freq
+}
+
+schedule_test_td3 04:00:00 1e1 1e1 2
+schedule_test_td3 04:00:00 1e2 1e1 2
+schedule_test_td3 08:00:00 1e2 1e2 2
+schedule_test_td3 08:00:00 1e2 1e2 4
+schedule_test_td3 08:00:00 1e2 1e2 6
+schedule_test_td3 16:00:00 1e3 1e2 2
+schedule_test_td3 16:00:00 1e3 1e2 4
+schedule_test_td3 16:00:00 1e3 1e2 6
+schedule_test_td3 96:00:00 1e3 1e3 4
+schedule_test_td3 96:00:00 1e4 1e3 4
+schedule_test_td3 96:00:00 1e3 1e5 4
+schedule_test_td3 96:00:00 1e3 1e7 4
