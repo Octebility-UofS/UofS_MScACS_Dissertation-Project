@@ -172,7 +172,6 @@ def _make_update_step(
         metrics = {}
 
         # Collect Trajectories
-        runner_state, trajectories = None, None
         with jax.disable_jit():
             runner_state, trajectories = jax.lax.scan(
                 _make_envs_step(

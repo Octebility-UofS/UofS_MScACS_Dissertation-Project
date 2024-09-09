@@ -94,7 +94,6 @@ def _make_env_step(config, env):
 def _make_update_step(config, env):
     def _update_step(runner_state, _):
         # Collect trajectories for replay buffer
-        runner_state, (traj_buffer, rewards) = None, (None, None)
         with jax.disable_jit():
             runner_state, (traj_buffer, rewards) = jax.lax.scan(
                 _make_env_step(config, env),
