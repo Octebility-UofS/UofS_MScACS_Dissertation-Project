@@ -94,12 +94,11 @@ def _make_env_step(config, env):
 def _make_update_step(config, env):
     def _update_step(runner_state, _):
         # Collect trajectories for replay buffer
-        with jax.disable_jit():
-            runner_state, (traj_buffer, rewards) = jax.lax.scan(
-                _make_env_step(config, env),
-                runner_state, None,
-                length=config["REPLAY_ENV_STEPS"]
-            )
+        runner_state, (traj_buffer, rewards) = jax.lax.scan(
+            jax.jit(_make_env_step(config, env), device=jax.devices("cpu")[0]),
+            runner_state, None,
+            length=config["REPLAY_ENV_STEPS"]
+        )
 
         mean_reward = jax.tree.map(
             lambda x: jnp.mean(jnp.sum(x, axis=0)),

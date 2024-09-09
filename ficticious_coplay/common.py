@@ -49,7 +49,7 @@ class Transition(NamedTuple):
     info: jnp.ndarray
 
 
-@partial(jax.jit, static_argnames=['map_agent_uid_to_partner_instance',])
+@partial(jax.jit, static_argnames=['map_agent_uid_to_partner_instance',], device=jax.devices("cpu")[0])
 def transform_env_partner(
     pytree,
     map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[int, tuple[tuple[str, tuple[int, int]], ...]]]]]
@@ -63,7 +63,7 @@ def transform_env_partner(
             )
     return transformed_mapping
 
-@partial(jax.jit, static_argnames=['reverse_map_agent_uid_to_partner_instance',])
+@partial(jax.jit, static_argnames=['reverse_map_agent_uid_to_partner_instance',], device=jax.devices("cpu")[0])
 def untransform_env_partner(
     transformed_mapping,
     reverse_map_agent_uid_to_partner_instance: frozenset[tuple[int, frozenset[tuple[str, tuple[tuple[tuple[int, int], tuple[int, tuple[int, int]]], ...]]]]]
@@ -85,7 +85,6 @@ def _make_envs_step(
     env_spec: EnvSpec, env,
     partners: list[list[SelfPlayAgent]]
     ):
-    @jax.jit
     def _envs_step(runner_state, _):
         env_obsv_state, partner_states, rng = runner_state
 
@@ -172,15 +171,16 @@ def _make_update_step(
         metrics = {}
 
         # Collect Trajectories
-        with jax.disable_jit():
-            runner_state, trajectories = jax.lax.scan(
-                _make_envs_step(
-                    map_agent_uid_to_partner_instance,
-                    reverse_map_agent_uid_to_partner_instance,
-                    env_spec, env, partners),
-                runner_state, None,
-                length=config["ENV_STEPS"]
-            )
+        runner_state, trajectories = jax.lax.scan(
+            jax.jit(_make_envs_step(
+                map_agent_uid_to_partner_instance,
+                reverse_map_agent_uid_to_partner_instance,
+                env_spec, env, partners),
+                device=jax.devices("cpu")[0]
+            ),
+            runner_state, None,
+            length=config["ENV_STEPS"]
+        )
 
         # Log the reward for each agent policy
         metrics["reward"] = {
