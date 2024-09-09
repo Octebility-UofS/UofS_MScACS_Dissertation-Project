@@ -3,7 +3,7 @@ schedule_test_td3 () {
     local env_steps=$2
     local update_steps=$3
     local p_freq=$4
-    sbatch --time=$time --output="out/td3/mixed/${env_steps}-${update_steps}/%j_slurm_log.out" job_schedule.sh "td3/mixed/${env_steps}-${update_steps}" test_td3.py REPLAY_ENV_STEPS=$env_steps NUM_UPDATES=$update_steps POLICY_FREQ=$p_freq
+    sbatch --time=$time --output="out/td3/mixed/${env_steps}-${update_steps}-pf${p_freq}/%j_slurm_log.out" job_schedule.sh "td3/mixed/${env_steps}-${update_steps}-pf${p_freq}" test_td3.py REPLAY_ENV_STEPS=$env_steps NUM_UPDATES=$update_steps POLICY_FREQ=$p_freq
 }
 
 schedule_test_td3 04:00:00 1e1 1e1 2
