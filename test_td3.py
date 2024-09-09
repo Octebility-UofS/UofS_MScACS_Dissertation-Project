@@ -10,11 +10,7 @@ def sys_argv_swallow(key):
         return arg.replace(f"{key}=", "")
     else:
         raise ValueError(f"You're only allowed to supply one argument with key {key}")
-    
-if __name__ == "__main__":
-    backend_arg = sys_argv_swallow("BACKEND")
-    if backend_arg == "cpu":
-        os.environ["JAX_PLATFORMS"] = "cpu"    
+   
 
 import __main__
 from datetime import datetime
@@ -98,11 +94,13 @@ def _make_env_step(config, env):
 def _make_update_step(config, env):
     def _update_step(runner_state, _):
         # Collect trajectories for replay buffer
-        runner_state, (traj_buffer, rewards) = jax.lax.scan(
-            _make_env_step(config, env),
-            runner_state, None,
-            length=config["REPLAY_ENV_STEPS"]
-        )
+        runner_state, (traj_buffer, rewards) = None, (None, None)
+        with jax.disable_jit():
+            runner_state, (traj_buffer, rewards) = jax.lax.scan(
+                _make_env_step(config, env),
+                runner_state, None,
+                length=config["REPLAY_ENV_STEPS"]
+            )
 
         mean_reward = jax.tree.map(
             lambda x: jnp.mean(jnp.sum(x, axis=0)),

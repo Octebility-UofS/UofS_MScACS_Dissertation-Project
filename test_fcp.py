@@ -13,13 +13,7 @@ def sys_argv_swallow(key):
         sys.argv.pop(ix)
         return arg.replace(f"{key}=", "")
     else:
-        raise ValueError(f"You're only allowed to supply one argument with key {key}")
-
-
-if __name__ == "__main__":
-    backend_arg = sys_argv_swallow("BACKEND")
-    if backend_arg == "cpu":
-        os.environ["JAX_PLATFORMS"] = "cpu"        
+        raise ValueError(f"You're only allowed to supply one argument with key {key}")    
 
 import __main__
 

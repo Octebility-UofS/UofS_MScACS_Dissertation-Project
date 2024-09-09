@@ -172,14 +172,16 @@ def _make_update_step(
         metrics = {}
 
         # Collect Trajectories
-        runner_state, trajectories = jax.lax.scan(
-            _make_envs_step(
-                map_agent_uid_to_partner_instance,
-                reverse_map_agent_uid_to_partner_instance,
-                env_spec, env, partners),
-            runner_state, None,
-            length=config["ENV_STEPS"]
-        )
+        runner_state, trajectories = None, None
+        with jax.disable_jit():
+            runner_state, trajectories = jax.lax.scan(
+                _make_envs_step(
+                    map_agent_uid_to_partner_instance,
+                    reverse_map_agent_uid_to_partner_instance,
+                    env_spec, env, partners),
+                runner_state, None,
+                length=config["ENV_STEPS"]
+            )
 
         # Log the reward for each agent policy
         metrics["reward"] = {

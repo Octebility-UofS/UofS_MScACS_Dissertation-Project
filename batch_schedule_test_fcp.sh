@@ -4,7 +4,7 @@ schedule_test_fcp () {
     local time=$1
     local env_steps=$2
     local update_steps=$3
-    sbatch --time=$time --output="out/fcp/gpu/${env_steps}-${update_steps}/%j_slurm_log.out" job_schedule.sh "fcp/gpu/${env_steps}-${update_steps}" test_fcp.py ENV_STEPS=$env_steps NUM_UPDATES=$update_steps NUM_CHECKPOINTS=10
+    sbatch --time=$time --output="out/fcp/mixed/${env_steps}-${update_steps}/%j_slurm_log.out" job_schedule.sh "fcp/mixed/${env_steps}-${update_steps}" test_fcp.py ENV_STEPS=$env_steps NUM_UPDATES=$update_steps NUM_CHECKPOINTS=10
 }
 
 
