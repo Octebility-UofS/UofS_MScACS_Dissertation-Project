@@ -31,7 +31,7 @@ def main():
     )
 
     rng = jax.random.PRNGKey(0)
-    states = jax.jit(_make_rollout(env, num_steps))(rng, state_actor)
+    states = _make_rollout(env, num_steps)(rng, state_actor)
 
     visualise(env, states, num_steps, out_path)
 

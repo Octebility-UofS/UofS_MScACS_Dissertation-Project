@@ -12,7 +12,7 @@ def unbatchify(x: jnp.ndarray, agent_list: list[str], num_envs: int, num_actors:
 
 def _make_env_step(env):
 
-    NUM_ENVS = 1
+    NUM_ENVS = 25
     NUM_ACTORS = env.num_agents * NUM_ENVS
 
     def _env_step(runner_state, _):
@@ -35,13 +35,13 @@ def _make_env_step(env):
         )
 
         runner_state = (actor_state, env_state, env_obs, rng)
-        return runner_state, env_state
+        return runner_state, (env_state, reward)
 
     return _env_step
 
 def _make_rollout(env, num_steps):
 
-    NUM_ENVS = 1
+    NUM_ENVS = 25
 
     def _rollout(rng, actor_state):
         rng, _rng = jax.random.split(rng)
@@ -50,17 +50,20 @@ def _make_rollout(env, num_steps):
 
         rng, _rng = jax.random.split(rng)
         runner_state = (actor_state, env_state, obsv, rng)
-        runner_state, rollout_states = jax.lax.scan(
+        runner_state, (rollout_states, rollout_rewards) = jax.lax.scan(
             _make_env_step(env),
             runner_state, None,
             length=num_steps
         )
 
-        # print(jax.tree.map(lambda x: x[jnp.newaxis, :], env_state))
-        # print(jax.tree.map(lambda x: x.reshape((num_steps, ) + x.shape[2:]), rollout_states))
+        # Select rollout with highest reward
+        ix = jnp.argmax(jnp.sum(rollout_rewards['__all__'], axis=0))
+        init_state = jax.tree.map(lambda x: x[ix], env_state)
+        select_states = jax.tree.map(lambda x: x[:, ix], rollout_states)
+
         concat_states = jax.tree.map(
-            lambda x, y: jnp.concatenate([x, y.reshape((num_steps, ) + y.shape[2:])], axis=0),
-            env_state, rollout_states
+            lambda x, y: jnp.concatenate([x.reshape((1, ) + x.shape), y], axis=0),
+            init_state, select_states
         )
         return concat_states
     return _rollout
