@@ -1,4 +1,9 @@
 import sys
+import os
+
+if __name__ == "__main__":
+    if sys.argv[-1] == "cpu":
+        os.environ["JAX_PLATFORMS"] = "cpu"
 
 import jax
 import jaxmarl
