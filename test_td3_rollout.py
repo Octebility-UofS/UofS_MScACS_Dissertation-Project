@@ -21,8 +21,15 @@ def main():
     out_path = sys.argv[3]
 
     env = jaxmarl.make("ant_4x2")
-    max_action = env.action_spaces[env.agents[0]].high
-    net_actor = DefaultActor(env.action_space(env.agents[0]).shape[0], max_action)
+
+    config = {
+        "NUM_STEPS": num_steps,
+        "NUM_ENVS": 25,
+        "MAX_ACTION": env.action_spaces[env.agents[0]].high
+    }
+    config["NUM_ACTORS"] = env.num_agents * config["NUM_ENVS"]
+
+    net_actor = DefaultActor(env.action_space(env.agents[0]).shape[0], config["MAX_ACTION"])
     actor_params = pickle_load(actor_params_path)
     state_actor = TrainState.create(
         apply_fn=net_actor.apply,
@@ -30,10 +37,14 @@ def main():
         tx=optax.adam(3e-4)
     )
 
-    rng = jax.random.PRNGKey(0)
-    states = _make_rollout(env, num_steps)(rng, state_actor)
+    
 
-    visualise(env, states, num_steps, out_path)
+    rng = jax.random.PRNGKey(0)
+    states = _make_rollout(
+        config, env
+    )(rng, state_actor)
+
+    visualise(env, states, config["NUM_STEPS"], out_path)
 
 
 if __name__ == "__main__":

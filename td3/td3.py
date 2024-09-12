@@ -51,6 +51,14 @@ class Transition(NamedTuple):
     obs: jnp.ndarray
     next_obs: jnp.ndarray
     # info: jnp.ndarray # TODO Figure out if we need this
+
+def batchify(x: dict, agent_list: list[str], num_actors: int):
+    x = jnp.stack([ x[a] for a in agent_list ])
+    return x.reshape((num_actors, -1))
+
+def unbatchify(x: jnp.ndarray, agent_list: list[str], num_envs: int, num_actors: int):
+    x = x.reshape((num_actors, num_envs, -1))
+    return {a: x[i] for i, a in enumerate(agent_list)}
     
 def make_td3(rng: jax.dtypes.prng_key, config, env):
     net_actor = DefaultActor(env.action_space(env.agents[0]).shape[0], config["MAX_ACTION"])

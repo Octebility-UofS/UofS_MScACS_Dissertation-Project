@@ -52,15 +52,9 @@ from jaxmarl.wrappers.baselines import LogWrapper
 from omegaconf import OmegaConf
 import matplotlib.pyplot as plt
 
-from td3.td3 import Transition, make_td3, make_td3_update
+from td3.td3 import Transition, batchify, make_td3, make_td3_update, unbatchify
 
-def batchify(x: dict, agent_list: list[str], num_actors: int):
-    x = jnp.stack([ x[a] for a in agent_list ])
-    return x.reshape((num_actors, -1))
 
-def unbatchify(x: jnp.ndarray, agent_list: list[str], num_envs: int, num_actors: int):
-    x = x.reshape((num_actors, num_envs, -1))
-    return {a: x[i] for i, a in enumerate(agent_list)}
 
 def _make_env_step(config, env):
     def _env_step(runner_state, _):
