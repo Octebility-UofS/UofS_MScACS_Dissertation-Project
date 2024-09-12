@@ -28,10 +28,11 @@ if __name__ == "__main__":
     job_id = sys_argv_swallow("JOB_ID")
     resume_id = sys_argv_swallow("RESUME")
 
-    if not out_path and not job_id:
-        raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
+    if (out_path or job_id):
+        if not (out_path and job_id):
+            raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
     
-    ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
+        ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
     sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
