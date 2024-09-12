@@ -124,8 +124,8 @@ def _make_update_step(config, env):
             length=config["REPLAY_ENV_STEPS"]
         )
 
-        mean_reward = jax.tree.map(
-            lambda x: jnp.mean(jnp.sum(x, axis=0)),
+        mean_reward_per_env = jax.tree.map(
+            lambda x: jnp.mean(x, axis=0),
             rewards
         )
 
@@ -137,7 +137,7 @@ def _make_update_step(config, env):
         jax.experimental.io_callback(_save_checkpoints, None, config["_CHECKPOINT_STEPS"], counter, config["NUM_UPDATES"], train_states)
 
         runner_state = (train_states, env_state, last_obs, update_count, rng)
-        return runner_state, {"loss": loss_info, "reward": mean_reward}
+        return runner_state, {"loss": loss_info, "reward": mean_reward_per_env}
     return _update_step
 
 def make_train(config, rng_init):
@@ -237,9 +237,13 @@ def main(config):
         res['metrics']['reward']
     )
 
-    reward_plot = LinePlot("Update Step", "Mean Reward")
+
     reward_data = res['metrics']['reward']['__all__']
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    cumulative_reward_plot = LinePlot("Update Step", "Cumulative Mean Reward")
     reward_plot.add(np.arange(reward_data.shape[0]), reward_data)
+    cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(reward_data))
+    reward_plot.save(os.path.join(ROOT_DIR, 'mean-reward.png'))
     reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
 
 if __name__ == "__main__":
