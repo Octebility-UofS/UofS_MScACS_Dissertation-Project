@@ -56,5 +56,9 @@ def main():
     reward_plot.add(np.arange(rewards.shape[0]), rewards)
     reward_plot.save(out_path + ".reward_plot.png")
 
+    reward_plot = LinePlot("Environment Step", "Cumulative Reward")
+    reward_plot.add(np.arange(rewards.shape[0]), np.cumsum(rewards))
+    reward_plot.save(out_path + ".cumulative_reward_plot.png")
+
 if __name__ == "__main__":
     main()
