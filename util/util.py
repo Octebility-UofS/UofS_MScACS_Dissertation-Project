@@ -48,6 +48,10 @@ def pickle_dump(file_name: str, content):
     with open(file_name, 'wb') as f:
         pickle.dump(content, f)
 
+def pickle_load(file_name: str):
+    with open(file_name, 'rb') as f:
+        return pickle.load(f)
+
 
 class LinePlot:
     def __init__(self, x_label, y_label, **kwargs):

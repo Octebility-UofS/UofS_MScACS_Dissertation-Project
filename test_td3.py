@@ -1,5 +1,6 @@
 import os
 import sys
+
 def sys_argv_swallow(key):
     lst_arg = [ (ix, arg) for ix, arg in enumerate(sys.argv) if arg.startswith(f"{key}=") ]
     if len(lst_arg) == 0:
@@ -24,10 +25,11 @@ if __name__ == "__main__":
     job_id = sys_argv_swallow("JOB_ID")
     resume_id = sys_argv_swallow("RESUME")
 
-    if not out_path and not job_id:
-        raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
+    if (out_path or job_id):
+        if not (out_path and job_id):
+            raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
     
-    ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
+        ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
     sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
@@ -35,10 +37,13 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 DATA_DIR = os.path.join(ROOT_DIR, 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
 
+print(ROOT_DIR)
+
 
 import hydra
 import numpy as np
 import jax
+import jax.experimental
 print(jax.devices())
 import jax.numpy as jnp
 from brax.io import html
@@ -47,15 +52,9 @@ from jaxmarl.wrappers.baselines import LogWrapper
 from omegaconf import OmegaConf
 import matplotlib.pyplot as plt
 
-from td3.td3 import Transition, make_td3, make_td3_update
+from td3.td3 import Transition, batchify, make_td3, make_td3_update, unbatchify
 
-def batchify(x: dict, agent_list: list[str], num_actors: int):
-    x = jnp.stack([ x[a] for a in agent_list ])
-    return x.reshape((num_actors, -1))
 
-def unbatchify(x: jnp.ndarray, agent_list: list[str], num_envs: int, num_actors: int):
-    x = x.reshape((num_actors, num_envs, -1))
-    return {a: x[i] for i, a in enumerate(agent_list)}
 
 def _make_env_step(config, env):
     def _env_step(runner_state, _):
@@ -91,8 +90,31 @@ def _make_env_step(config, env):
 
     return _env_step
 
+def _save_checkpoints(checkpoint_steps, counter, total_num_updates, train_states):
+    if counter in checkpoint_steps:
+        _save_format_step = len(str(int(total_num_updates-1)))
+        str_step = str(int(counter)).zfill(_save_format_step)
+        state_actor, state_actor_target, state_critic, state_critic_target = train_states
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_actor_params.ckpt'),
+            state_actor.params
+        )
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_actor_target_params.ckpt'),
+            state_actor_target.params
+        )
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_critic_params.ckpt'),
+            state_critic.params
+        )
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_critic_target_params.ckpt'),
+            state_critic_target.params
+        )
+    return None
+
 def _make_update_step(config, env):
-    def _update_step(runner_state, _):
+    def _update_step(runner_state, counter):
         # Collect trajectories for replay buffer
         runner_state, (traj_buffer, rewards) = jax.lax.scan(
             jax.jit(_make_env_step(config, env), device=jax.devices("cpu")[0]),
@@ -100,8 +122,8 @@ def _make_update_step(config, env):
             length=config["REPLAY_ENV_STEPS"]
         )
 
-        mean_reward = jax.tree.map(
-            lambda x: jnp.mean(jnp.sum(x, axis=0)),
+        mean_reward_per_env = jax.tree.map(
+            lambda x: jnp.mean(x, axis=0),
             rewards
         )
 
@@ -110,8 +132,10 @@ def _make_update_step(config, env):
         rng, _rng = jax.random.split(rng)
         train_states, loss_info = make_td3_update(config)(_rng, train_states, traj_buffer)
 
+        jax.experimental.io_callback(_save_checkpoints, None, config["_CHECKPOINT_STEPS"], counter, config["NUM_UPDATES"], train_states)
+
         runner_state = (train_states, env_state, last_obs, update_count, rng)
-        return runner_state, {"loss": loss_info, "reward": mean_reward}
+        return runner_state, {"loss": loss_info, "reward": mean_reward_per_env}
     return _update_step
 
 def make_train(config, rng_init):
@@ -148,7 +172,8 @@ def make_train(config, rng_init):
         runner_state = (train_states, env_state, obsv, update_count, _rng)
         runner_state, metric = jax.lax.scan(
             _make_update_step(config, env),
-            runner_state, None,
+            runner_state,
+            jnp.arange(0, config["NUM_UPDATES"]),
             length=config["NUM_UPDATES"]
         )
 
@@ -158,6 +183,15 @@ def make_train(config, rng_init):
 @hydra.main(version_base=None, config_path="config", config_name="test_td3")
 def main(config):
     config = OmegaConf.to_container(config)
+
+    config["_CHECKPOINT_STEPS"] = list(np.linspace(
+        0,
+        config["NUM_UPDATES"] - 1,
+        num=config["NUM_CHECKPOINTS"],
+        endpoint=True,
+        dtype=np.int32
+        ))  
+
     rng = jax.random.PRNGKey(config["JAX_SEED"])
     rng, _rng = jax.random.split(rng)
 
@@ -180,30 +214,6 @@ def main(config):
         f"Run Time, {stop_time-start_time}\n",
         append=True
     )
-
-
-    (
-        state_actor,
-        state_actor_target,
-        state_critic,
-        state_critic_target
-    ) = res["runner_state"][0]
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_actor_params.ckpt'),
-        state_actor.params
-    )
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_actor_target_params.ckpt'),
-        state_actor_target.params
-    )
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_critic_params.ckpt'),
-        state_critic.params
-    )
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_critic_target_params.ckpt'),
-        state_critic_target.params
-    )
         
 
     metrics_y_actor_loss = np.array(res['metrics']['loss']['actor_loss'])
@@ -225,10 +235,18 @@ def main(config):
         res['metrics']['reward']
     )
 
-    reward_plot = LinePlot("Update Step", "Mean Reward")
+
     reward_data = res['metrics']['reward']['__all__']
-    reward_plot.add(np.arange(reward_data.shape[0]), reward_data)
-    reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
+
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    reward_plot.add(np.arange(reward_data.shape[0]), jnp.mean(reward_data, axis=1))
+    reward_plot.save(os.path.join(ROOT_DIR, 'mean-reward.png'))
+
+    cumulative_reward_plot = LinePlot("Update Step", "Cumulative Mean Reward")
+    cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(jnp.mean(reward_data, axis=1)))
+    cumulative_reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
+
+    print(os.listdir(ROOT_DIR))
 
 if __name__ == "__main__":
     main()

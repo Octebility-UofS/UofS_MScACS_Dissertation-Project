@@ -26,19 +26,20 @@ if __name__ == "__main__":
     job_id = sys_argv_swallow("JOB_ID")
     resume_id = sys_argv_swallow("RESUME")
 
-    if not out_path and not job_id:
-        raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
+    if (out_path or job_id):
+        if not (out_path and job_id):
+            raise ValueError("You must specify both OUT_PATH and JOB_ID, not only one")
     
-    if resume_id:
-        ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}-resume-{resume_id}")
-        old_dir = [ d for d in os.listdir(os.path.join('.', 'out', out_path)) if d.startswith(resume_id) ][0]
-        shutil.copytree(
-            os.path.join('.', 'out', out_path, old_dir),
-            os.path.join('.', 'out', out_path, f"{job_id}-resume-{resume_id}"),
-            ignore=lambda dirname, files: ["hydra"] if dirname.endswith(old_dir) else []
-        )
-    else:
-        ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
+        if resume_id:
+            ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}-resume-{resume_id}")
+            old_dir = [ d for d in os.listdir(os.path.join('.', 'out', out_path)) if d.startswith(resume_id) ][0]
+            shutil.copytree(
+                os.path.join('.', 'out', out_path, old_dir),
+                os.path.join('.', 'out', out_path, f"{job_id}-resume-{resume_id}"),
+                ignore=lambda dirname, files: ["hydra"] if dirname.endswith(old_dir) else []
+            )
+        else:
+            ROOT_DIR = os.path.join('.', 'out', out_path, f"{job_id}")
     sys.argv.append(f'hydra.run.dir={ROOT_DIR}/hydra')
 os.makedirs(ROOT_DIR, exist_ok=True)
 CHECKPOINT_DIR = os.path.join(ROOT_DIR, "checkpoints")
@@ -289,15 +290,18 @@ def make_ppo_agent(init_rng, config, env_spec: EnvSpec, team_spec: TeamSpec, env
             pickle.dump(target, f)
         return agent_state
 
-    def load(agent_state, step):
+    def load(agent_state, step, dir=None):
         def _frozen_update(rng, trajectories, agent_state):
             return agent_state, (jnp.zeros(1), (jnp.zeros(1), jnp.zeros(1), jnp.zeros(1)))
         def _frozen_save(agent_state, step):
             return agent_state
         
         restored_params = None
-        str_step = str(int(step)).zfill(_save_format_step)
-        with open(os.path.join(CHECKPOINT_DIR, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'rb') as f:
+        str_step = step
+        if type(step) != str:
+            str_step = str(int(step)).zfill(_save_format_step)
+        load_dir = dir if dir else CHECKPOINT_DIR
+        with open(os.path.join(load_dir, f"{checkpoint_prefix}{str_step}.param.ckpt"), 'rb') as f:
             restored_params = pickle.load(f)
 
         new_agent_state = {}
