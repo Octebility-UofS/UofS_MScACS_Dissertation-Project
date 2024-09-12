@@ -39,7 +39,7 @@ def make_rollout(config, env):
         rng, _rng = jax.random.split(rng)
         runner_state = (actor_state, env_state, obsv, rng)
         runner_state, (rollout_states, rollout_rewards) = jax.lax.scan(
-            _make_env_step(env),
+            _make_env_step(config, env),
             runner_state, None,
             length=config["NUM_STEPS"]
         )
