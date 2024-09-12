@@ -1,7 +1,6 @@
 import os
 import sys
 
-import jax.experimental
 def sys_argv_swallow(key):
     lst_arg = [ (ix, arg) for ix, arg in enumerate(sys.argv) if arg.startswith(f"{key}=") ]
     if len(lst_arg) == 0:
@@ -48,6 +47,7 @@ print(ROOT_DIR)
 import hydra
 import numpy as np
 import jax
+import jax.experimental
 print(jax.devices())
 import jax.numpy as jnp
 from brax.io import html
