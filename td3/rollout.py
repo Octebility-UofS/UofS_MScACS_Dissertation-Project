@@ -58,7 +58,7 @@ def make_rollout(config, env):
 
 def visualise(env, states, num_steps, out_path):
     state_history = [
-        jax.tree.map(lambda x: x[i], states.pipeline_state) for i in range(num_steps+1)
+        jax.tree.map(lambda x: x[i], states.env_state.pipeline_state) for i in range(num_steps+1)
     ]
     rendered_html = html.render(env.sys, state_history)
     with open(out_path, 'w') as f:
