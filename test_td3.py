@@ -243,12 +243,14 @@ def main(config):
     reward_data = res['metrics']['reward']['__all__']
 
     reward_plot = LinePlot("Update Step", "Mean Reward")
-    reward_plot.add(np.arange(reward_data.shape[0]), reward_data)
+    reward_plot.add(np.arange(reward_data.shape[0]), jnp.mean(reward_data, axis=1))
     reward_plot.save(os.path.join(ROOT_DIR, 'mean-reward.png'))
 
     cumulative_reward_plot = LinePlot("Update Step", "Cumulative Mean Reward")
-    cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(reward_data))
+    cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(jnp.mean(reward_data, axis=1)))
     cumulative_reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
+
+    print(os.listdir(ROOT_DIR))
 
 if __name__ == "__main__":
     main()
