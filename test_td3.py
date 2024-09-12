@@ -42,6 +42,8 @@ os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 DATA_DIR = os.path.join(ROOT_DIR, 'data')
 os.makedirs(DATA_DIR, exist_ok=True)
 
+print(ROOT_DIR)
+
 
 import hydra
 import numpy as np
@@ -239,12 +241,14 @@ def main(config):
 
 
     reward_data = res['metrics']['reward']['__all__']
+
     reward_plot = LinePlot("Update Step", "Mean Reward")
-    cumulative_reward_plot = LinePlot("Update Step", "Cumulative Mean Reward")
     reward_plot.add(np.arange(reward_data.shape[0]), reward_data)
-    cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(reward_data))
     reward_plot.save(os.path.join(ROOT_DIR, 'mean-reward.png'))
-    reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
+
+    cumulative_reward_plot = LinePlot("Update Step", "Cumulative Mean Reward")
+    cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(reward_data))
+    cumulative_reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
 
 if __name__ == "__main__":
     main()
