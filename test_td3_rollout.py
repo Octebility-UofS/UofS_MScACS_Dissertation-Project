@@ -1,6 +1,8 @@
 import sys
 import os
 
+import numpy as np
+
 if __name__ == "__main__":
     if sys.argv[-1] == "cpu":
         os.environ["JAX_PLATFORMS"] = "cpu"
@@ -11,7 +13,7 @@ import optax
 
 from td3.rollout import make_rollout, visualise
 from td3.td3 import DefaultActor
-from util.util import pickle_load
+from util.util import LinePlot, pickle_load
 from flax.training.train_state import TrainState
 from jaxmarl.wrappers.baselines import LogWrapper
 
@@ -42,12 +44,17 @@ def main():
     
 
     rng = jax.random.PRNGKey(0)
-    states = make_rollout(
+    states, rewards = make_rollout(
         config, env
     )(rng, state_actor)
 
+    os.makedirs(os.path.split(out_path)[0], exist_ok=True)
+
     visualise(env, states, config["NUM_STEPS"], out_path)
 
+    reward_plot = LinePlot("Environment Step", "Reward")
+    reward_plot.add(np.arange(rewards.shape[0]), rewards)
+    reward_plot.save(out_path + ".reward_plot.png")
 
 if __name__ == "__main__":
     main()

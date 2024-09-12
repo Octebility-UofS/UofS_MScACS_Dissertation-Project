@@ -1,5 +1,7 @@
 import os
 import sys
+
+import jax.experimental
 def sys_argv_swallow(key):
     lst_arg = [ (ix, arg) for ix, arg in enumerate(sys.argv) if arg.startswith(f"{key}=") ]
     if len(lst_arg) == 0:
@@ -90,8 +92,31 @@ def _make_env_step(config, env):
 
     return _env_step
 
+def _save_checkpoints(checkpoint_steps, counter, total_num_updates, train_states):
+    if counter in checkpoint_steps:
+        _save_format_step = len(str(int(total_num_updates-1)))
+        str_step = str(int(counter)).zfill(_save_format_step)
+        state_actor, state_actor_target, state_critic, state_critic_target = train_states
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_actor_params.ckpt'),
+            state_actor.params
+        )
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_actor_target_params.ckpt'),
+            state_actor_target.params
+        )
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_critic_params.ckpt'),
+            state_critic.params
+        )
+        pickle_dump(
+            os.path.join(CHECKPOINT_DIR, f'{str_step}_state_critic_target_params.ckpt'),
+            state_critic_target.params
+        )
+    return None
+
 def _make_update_step(config, env):
-    def _update_step(runner_state, _):
+    def _update_step(runner_state, counter):
         # Collect trajectories for replay buffer
         runner_state, (traj_buffer, rewards) = jax.lax.scan(
             _make_env_step(config, env),
@@ -108,6 +133,8 @@ def _make_update_step(config, env):
         train_states, env_state, last_obs, update_count, rng = runner_state
         rng, _rng = jax.random.split(rng)
         train_states, loss_info = make_td3_update(config)(_rng, train_states, traj_buffer)
+
+        jax.experimental.io_callback(_save_checkpoints, None, config["_CHECKPOINT_STEPS"], counter, config["NUM_UPDATES"], train_states)
 
         runner_state = (train_states, env_state, last_obs, update_count, rng)
         return runner_state, {"loss": loss_info, "reward": mean_reward}
@@ -147,7 +174,8 @@ def make_train(config, rng_init):
         runner_state = (train_states, env_state, obsv, update_count, _rng)
         runner_state, metric = jax.lax.scan(
             _make_update_step(config, env),
-            runner_state, None,
+            runner_state,
+            jnp.arange(0, config["NUM_UPDATES"]),
             length=config["NUM_UPDATES"]
         )
 
@@ -157,6 +185,15 @@ def make_train(config, rng_init):
 @hydra.main(version_base=None, config_path="config", config_name="test_td3")
 def main(config):
     config = OmegaConf.to_container(config)
+
+    config["_CHECKPOINT_STEPS"] = list(np.linspace(
+        0,
+        config["NUM_UPDATES"] - 1,
+        num=config["NUM_CHECKPOINTS"],
+        endpoint=True,
+        dtype=np.int32
+        ))  
+
     rng = jax.random.PRNGKey(config["JAX_SEED"])
     rng, _rng = jax.random.split(rng)
 
@@ -178,30 +215,6 @@ def main(config):
         os.path.join(ROOT_DIR, 'timing.csv'),
         f"Run Time, {stop_time-start_time}\n",
         append=True
-    )
-
-
-    (
-        state_actor,
-        state_actor_target,
-        state_critic,
-        state_critic_target
-    ) = res["runner_state"][0]
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_actor_params.ckpt'),
-        state_actor.params
-    )
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_actor_target_params.ckpt'),
-        state_actor_target.params
-    )
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_critic_params.ckpt'),
-        state_critic.params
-    )
-    pickle_dump(
-        os.path.join(CHECKPOINT_DIR, 'final_state_critic_target_params.ckpt'),
-        state_critic_target.params
     )
         
 

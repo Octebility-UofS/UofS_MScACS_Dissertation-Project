@@ -53,7 +53,8 @@ def make_rollout(config, env):
             lambda x, y: jnp.concatenate([x.reshape((1, ) + x.shape), y], axis=0),
             init_state, select_states
         )
-        return concat_states
+        select_rewards = rollout_rewards['__all__'][:, ix]
+        return concat_states, select_rewards
     return _rollout
 
 def visualise(env, states, num_steps, out_path):
