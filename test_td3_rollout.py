@@ -9,7 +9,7 @@ import jax
 import jaxmarl
 import optax
 
-from td3.rollout import _make_rollout, visualise
+from td3.rollout import make_rollout, visualise
 from td3.td3 import DefaultActor
 from util.util import pickle_load
 from flax.training.train_state import TrainState
@@ -40,7 +40,7 @@ def main():
     
 
     rng = jax.random.PRNGKey(0)
-    states = _make_rollout(
+    states = make_rollout(
         config, env
     )(rng, state_actor)
 
