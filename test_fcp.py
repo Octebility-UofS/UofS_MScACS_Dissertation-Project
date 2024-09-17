@@ -414,8 +414,8 @@ def _process_stage_1(config, rng):
         os.path.join(DATA_DIR, 'stage-1_mean-delivered-dishes.pkl'),
         mean_delivered_dishes_per_update
     )
-    reward_plot = LinePlot("Environment Step", "Mean Reward")
-    dishes_plot = LinePlot("Environment Step", "Mean Dishes Delivered")
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    dishes_plot = LinePlot("Update Step", "Mean Dishes Delivered")
     for team_ix, team_rewards in mean_reward_per_update.items():
         for p_ix, partner_rewards in team_rewards.items():
             reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
@@ -528,7 +528,7 @@ def _process_stage_2(config, rng):
         s2_episode_metrics["reward"]["sum"]
     )
     mean_delivered_dishes_per_update = jax.tree.map(
-        lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1),
+        lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
         s2_episode_metrics["reward"]["dishes"]
     )
     pickle_dump(
@@ -539,8 +539,8 @@ def _process_stage_2(config, rng):
         os.path.join(DATA_DIR, 'stage-2_mean-delivered-dishes.pkl'),
         mean_delivered_dishes_per_update
     )
-    reward_plot = LinePlot("Environment Step", "Mean Reward")
-    dishes_plot = LinePlot("Environment Step", "Mean Dishes Delivered")
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    dishes_plot = LinePlot("Update Step", "Mean Dishes Delivered")
     for team_ix, team_rewards in mean_reward_per_update.items():
         for p_ix, partner_rewards in team_rewards.items():
             if p_ix == 0 and team_fcp_agents[team_ix]:
