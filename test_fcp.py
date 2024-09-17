@@ -674,6 +674,14 @@ def _process_rollout(config, rng):
                 combined_dishes = cumulative_delivered_dishes[agent_uid_0][rollout_ix] + cumulative_delivered_dishes[agent_uid_1][rollout_ix]
                 matrix_reward[p0_map_ix, p1_map_ix] = combined_reward
                 matrix_delivered_dishes[p0_map_ix, p1_map_ix] = combined_dishes
+            pickle_dump(
+                os.path.join(DATA_DIR, "rollout_cumulative-reward") + save_name.replace(".png", ".pkl"),
+                (matrix_reward, labels)
+            )
+            pickle_dump(
+                os.path.join(DATA_DIR, "rollout_cumulative-delivered-dishes") + save_name.replace(".png", ".pkl"),
+                (matrix_delivered_dishes, labels)
+            )
             HeatMatrix(
                 matrix_reward, labels, labels, figsize=[32, 32]
             ).save(os.path.join(ROOT_DIR, "cumulative-reward") + save_name)
