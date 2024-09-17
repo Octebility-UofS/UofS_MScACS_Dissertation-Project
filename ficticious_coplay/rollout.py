@@ -57,7 +57,7 @@ def make_runner_rollout(config, env, partners, map_agent_id_to_partner, num_tota
     return _runner_rollout
 
 
-def make_rollout(config, init_rng, rollout_env_spec, team_agents, rollout_permutations, max_steps=300):
+def make_rollout(config, init_rng, rollout_env_spec, team_agents, rollout_permutations):
     
     env = jaxmarl.make(rollout_env_spec.env_id, **rollout_env_spec.env_kwargs)
 
@@ -85,6 +85,8 @@ def make_rollout(config, init_rng, rollout_env_spec, team_agents, rollout_permut
             map_agent_id_to_partner[a_id] = (team_ix, p_ix)
 
     total_environments = config["ROLLOUT_NUM_ENVS"] * len(rollout_permutations)
+    print("Rollout Total Environments:", total_environments)
+    print("Rollout Steps:", config["ROLLOUT_STEPS"])
 
     @jax.jit
     def _rollout(rng):
@@ -96,7 +98,7 @@ def make_rollout(config, init_rng, rollout_env_spec, team_agents, rollout_permut
         last_runner_state, (scanned_states, scanned_rewards) = jax.lax.scan(
             make_runner_rollout(config, env, rollout_permutation_partners, map_agent_id_to_partner, total_environments, len(rollout_permutations)),
             runner_state, None,
-            length=max_steps
+            length=config["ROLLOUT_STEPS"]
         )
         batched_init_state = jax.tree.map(
             lambda x: x.reshape((len(rollout_permutations), config["ROLLOUT_NUM_ENVS"]) + x.shape[1:]),
