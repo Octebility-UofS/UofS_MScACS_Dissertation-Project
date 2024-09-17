@@ -19,10 +19,7 @@ class DefaultActor(nn.Module):
         x = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = nn.relu(x)
         x = nn.Dense(self.action_dim, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
-        x = self.max_action * nn.tanh(x)
-        # Add some noise and return a multivariate normal distribution that can be sampled from
-        log_std = self.param('log_std', nn.initializers.zeros, (self.action_dim,))
-        return distrax.MultivariateNormalDiag(x, jnp.exp(log_std))
+        return self.max_action * nn.tanh(x)
     
 class DefaultCritic(nn.Module):
     @nn.compact
