@@ -52,7 +52,7 @@ from omegaconf import OmegaConf
 
 from ficticious_coplay.rollout import make_rollout
 from ficticious_coplay.common import SelfPlayAgent
-from util.util import HeatMatrix, LinePlot, file_write, nary_sequences, pickle_dump
+from util.util import HeatMatrix, LinePlot, file_write, nary_sequences, pickle_dump, pickle_load
 
 
 import jax
@@ -408,14 +408,18 @@ def _process_stage_1(config, rng):
         os.path.join(DATA_DIR, 'stage-1_mean-delivered-dishes.pkl'),
         mean_delivered_dishes_per_update
     )
-    reward_plot = LinePlot("Environment Step", "Mean Reward")
-    dishes_plot = LinePlot("Environment Step", "Mean Dishes Delivered")
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    dishes_plot = LinePlot("Update Step", "Mean Dishes Delivered")
     for team_ix, team_rewards in mean_reward_per_update.items():
+        mean_team_reward = jnp.mean(jnp.stack(jax.tree.leaves(team_rewards)), axis=0)
+        reward_plot.add(range(mean_team_reward.shape[0]), mean_team_reward, label=f"Team-{team_ix}")
         for p_ix, partner_rewards in team_rewards.items():
-            reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-{p_ix}")
+            reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.05)
     for team_ix, team_dishes in mean_delivered_dishes_per_update.items():
+        mean_team_dishes = jnp.mean(jnp.stack(jax.tree.leaves(team_dishes)), axis=0)
+        dishes_plot.add(range(mean_team_dishes.shape[0]), mean_team_dishes, label=f"Team-{team_ix}")
         for p_ix, partner_dishes in team_dishes.items():
-            dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-{p_ix}")
+            dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, alpha=0.05)
     reward_plot.save(os.path.join(ROOT_DIR, "stage-1_mean-reward-per-partner.png"))
     dishes_plot.save(os.path.join(ROOT_DIR, "stage-1_mean-dishes-per-partner.png"))
     
@@ -468,8 +472,22 @@ def _process_stage_1(config, rng):
 
 
 
-
-
+def get_load_steps(config, fn_stage_1_reward_data):
+    # Low-skill = ix (0), medium-skill checkpoint closest to half max reward, and high-skill = ix (-1)
+    stage_1_rewards = pickle_load(fn_stage_1_reward_data)
+    half_reward_ix = jax.tree.map(
+        lambda x: (jnp.abs(x - jnp.max(x).item()/2)).argmin().item(),
+        stage_1_rewards
+    )
+    mean_half_reward_ix = int(jnp.mean(jnp.array(jax.tree.leaves(half_reward_ix))).item())
+    saved_steps = config["_CHECKPOINT_STEPS"]
+    # Get checkpoint step closest to half reward update step
+    load_steps = [
+        saved_steps[0],
+        saved_steps[jnp.abs(jnp.array(saved_steps) - mean_half_reward_ix).argmin().item()],
+        saved_steps[-1]
+    ]
+    return load_steps
 
 
 def _process_stage_2(config, rng):
@@ -485,8 +503,11 @@ def _process_stage_2(config, rng):
             team_config["AGENT_COUNT"],
             team_config["AGENT_IDS"]
         ))
-    saved_steps = config["_CHECKPOINT_STEPS"]
-    load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
+
+    # Load Checkpoints to be trained
+    load_steps = get_load_steps(config, os.path.join(DATA_DIR, 'stage-1_mean-reward.pkl'))
+    print("Selected Checkpoints:", load_steps)
+    
     team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
     rng, init_rng = jax.random.split(rng)
     rng, _rng = jax.random.split(rng)
@@ -522,7 +543,7 @@ def _process_stage_2(config, rng):
         s2_episode_metrics["reward"]["sum"]
     )
     mean_delivered_dishes_per_update = jax.tree.map(
-        lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]) == DELIVERY_REWARD, axis=-1),
+        lambda x: jnp.mean(x.reshape((int(config["NUM_EPISODES"]*config["NUM_UPDATES"]), ) + x.shape[2:]), axis=-1),
         s2_episode_metrics["reward"]["dishes"]
     )
     pickle_dump(
@@ -533,20 +554,20 @@ def _process_stage_2(config, rng):
         os.path.join(DATA_DIR, 'stage-2_mean-delivered-dishes.pkl'),
         mean_delivered_dishes_per_update
     )
-    reward_plot = LinePlot("Environment Step", "Mean Reward")
-    dishes_plot = LinePlot("Environment Step", "Mean Dishes Delivered")
+    reward_plot = LinePlot("Update Step", "Mean Reward")
+    dishes_plot = LinePlot("Update Step", "Mean Dishes Delivered")
     for team_ix, team_rewards in mean_reward_per_update.items():
         for p_ix, partner_rewards in team_rewards.items():
             if p_ix == 0 and team_fcp_agents[team_ix]:
-                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"{team_ix}-fcp", alpha=1.0)
+                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, label=f"FCP Policy {team_ix}", alpha=1.0)
             else:
-                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.1)
+                reward_plot.add(range(partner_rewards.shape[0]), partner_rewards, alpha=0.05)
     for team_ix, team_dishes in mean_delivered_dishes_per_update.items():
         for p_ix, partner_dishes in team_dishes.items():
             if p_ix == 0 and team_fcp_agents[team_ix]:
-                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"{team_ix}-fcp", alpha=1.0)
+                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, label=f"FCP Policy {team_ix}", alpha=1.0)
             else:
-                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, alpha=0.1)
+                dishes_plot.add(range(partner_dishes.shape[0]), partner_dishes, alpha=0.05)
     reward_plot.save(os.path.join(ROOT_DIR, "stage-2_mean-reward-per-partner.png"))
     dishes_plot.save(os.path.join(ROOT_DIR, "stage-2_mean-dishes-per-partner.png"))
 
@@ -597,11 +618,9 @@ def _process_stage_2(config, rng):
 
 
 def _process_rollout(config, rng):
-    max_rollout_steps = config["ROLLOUT_STEPS"]
-    num_rollout_envs = config["ROLLOUT_NUM_ENVS"]
     rollout_env_spec = EnvSpec(
         config["ENV"]["ID"],
-        num_rollout_envs,
+        config["ROLLOUT_NUM_ENVS"],
         {"layout": overcooked_layouts[config["ENV"]["KWARGS"]["layout"]]}
     )
     teams = []
@@ -611,8 +630,10 @@ def _process_rollout(config, rng):
             team_config["AGENT_COUNT"],
             team_config["AGENT_IDS"]
         ))
-    saved_steps = config["_CHECKPOINT_STEPS"]
-    load_steps = [saved_steps[0], saved_steps[len(saved_steps)//2], saved_steps[-1]]
+    
+    # Load Checkpoints to be trained
+    load_steps = get_load_steps(config, os.path.join(DATA_DIR, 'stage-1_mean-reward.pkl'))
+
     team_fcp_agents = [ globals().get(fcp_agent_cls_str) for fcp_agent_cls_str in config["FCP_AGENTS"] ]
 
     rollout_teams = []
@@ -638,7 +659,7 @@ def _process_rollout(config, rng):
     rng, init_rng = jax.random.split(rng)
     rng, _rng = jax.random.split(rng)
     scanned_states, scanned_rewards = jax.jit(make_rollout(
-        config, init_rng, rollout_env_spec, team_agents, rollout_permutations, max_steps=max_rollout_steps
+        config, init_rng, rollout_env_spec, team_agents, rollout_permutations
     ))(_rng)
 
     cumulative_reward = jax.tree.map(
@@ -668,12 +689,47 @@ def _process_rollout(config, rng):
                 combined_dishes = cumulative_delivered_dishes[agent_uid_0][rollout_ix] + cumulative_delivered_dishes[agent_uid_1][rollout_ix]
                 matrix_reward[p0_map_ix, p1_map_ix] = combined_reward
                 matrix_delivered_dishes[p0_map_ix, p1_map_ix] = combined_dishes
+            pickle_dump(
+                os.path.join(DATA_DIR, "rollout_cumulative-reward") + save_name.replace(".png", ".pkl"),
+                (matrix_reward, labels)
+            )
+            pickle_dump(
+                os.path.join(DATA_DIR, "rollout_cumulative-delivered-dishes") + save_name.replace(".png", ".pkl"),
+                (matrix_delivered_dishes, labels)
+            )
             HeatMatrix(
                 matrix_reward, labels, labels, figsize=[32, 32]
             ).save(os.path.join(ROOT_DIR, "cumulative-reward") + save_name)
             HeatMatrix(
                 matrix_delivered_dishes, labels, labels, figsize=[32, 32]
             ).save(os.path.join(ROOT_DIR, "cumulative-delivered-dishes") + save_name)
+
+            # Assumes that we only have the three different checkpoint types
+            matrix_size = matrix_reward.shape[0]
+            fcp_ixs = [0, ]
+            low_ixs = list(range(1, matrix_size, 3))
+            med_ixs = list(range(2, matrix_size, 3))
+            hi_ixs = list(range(3, matrix_size, 3))
+
+            mean_crossplay_reward = []
+            mean_crossplay_delivered = []
+            for row_ixs in [ fcp_ixs, low_ixs, med_ixs, hi_ixs ]:
+                row_reward = []
+                row_delivered = []
+                for col_ixs in [ fcp_ixs, low_ixs, med_ixs, hi_ixs ]:
+                    row_reward.append( np.mean(matrix_reward[row_ixs, col_ixs]).item() )
+                    row_delivered.append( np.mean(matrix_delivered_dishes[row_ixs, col_ixs]).item() )
+                mean_crossplay_reward.append(row_reward)
+                mean_crossplay_delivered.append(row_delivered)
+            mean_crossplay_reward = np.array(mean_crossplay_reward)
+            mean_crossplay_delivered = np.array(mean_crossplay_delivered)
+            crossplay_labels = [ "FCP Policy", f"Checkpoint {load_steps[0]}", f"Checkpoint {load_steps[1]}", f"Checkpoint {load_steps[2]}" ]
+            HeatMatrix(
+                mean_crossplay_reward, crossplay_labels, crossplay_labels, figsize=[8, 8]
+            ).save(os.path.join(ROOT_DIR, "crossplay-cumulative-reward") + save_name)
+            HeatMatrix(
+                mean_crossplay_delivered, crossplay_labels, crossplay_labels, figsize=[8, 8]
+            ).save(os.path.join(ROOT_DIR, "crossplay-cumulative-delivered-dishes") + save_name)
 
 
 
