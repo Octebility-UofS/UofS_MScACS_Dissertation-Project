@@ -1,29 +1,23 @@
 schedule_test_td3 () {
     local time=$1
-    local env_steps=$2
-    local update_steps=$3
-    local p_freq=$4
-    local environments=$5
-    local batch_size=$6
-    sbatch --time=$time --output="out/td3/gpu/${env_steps}-${update_steps}-pf${p_freq}/%j_slurm_log.out" \
-    job_schedule.sh "td3/gpu/${env_steps}-${update_steps}-pf${p_freq}" test_td3.py \
-    REPLAY_ENV_STEPS=$env_steps NUM_UPDATES=$update_steps POLICY_FREQ=$p_freq NUM_ENVS=$environments BATCH_SIZE=$batch_size
+    local explore_steps=$2
+    local env_steps=$3
+    local environments=$4
+    local batch_size=$5
+    local p_freq=$6
+    sbatch --time=$time --output="out/td3/gpu/${env_steps}-${explore_steps}-pf${p_freq}/%j_slurm_log.out" \
+    job_schedule.sh "td3/gpu/${env_steps}-${explore_steps}-pf${p_freq}" test_td3.py \
+    TOTAL_STEPS=$env_steps EXPLORATION_STEPS=$explore_steps NUM_ENVS=$environments BATCH_SIZE=$batch_size POLICY_FREQ=$p_freq
 }
 
-schedule_test_td3 01:00:00 1e1 1e1 2 256 256
-schedule_test_td3 01:00:00 1e2 1e1 2 256 1024
+schedule_test_td3 01:00:00 4e1 8e2 8 64 2
+schedule_test_td3 01:00:00 8e1 16e2 8 64 2
+schedule_test_td3 01:00:00 16e1 32e2 8 64 2
+schedule_test_td3 01:00:00 8e1 8e4 16 128 2
+schedule_test_td3 01:00:00 16e1 16e4 32 256 2
+schedule_test_td3 01:00:00 16e3 4e6 128 512 2
 
-schedule_test_td3 01:00:00 1e2 1e2 2 256 2048
-schedule_test_td3 01:00:00 1e2 1e2 4 256 2048
-schedule_test_td3 01:00:00 1e2 1e2 6 256 2048
-
-schedule_test_td3 01:00:00 1e3 1e2 2 256 8192
-schedule_test_td3 01:00:00 1e3 1e2 4 256 8192
-schedule_test_td3 01:00:00 1e3 1e2 6 256 8192
-
-schedule_test_td3 03:00:00 1e3 1e3 2 256 8192
-schedule_test_td3 24:00:00 1e3 1e4 2 256 8192
-schedule_test_td3 96:00:00 1e3 1e5 2 256 8192
-
-schedule_test_td3 24:00:00 1e4 1e3 2 256 16384
-schedule_test_td3 96:00:00 1e4 1e4 2 256 16384
+schedule_test_td3 06:00:00 16e2 16e6 16 4096 2
+schedule_test_td3 12:00:00 16e2 16e7 16 4096 2
+schedule_test_td3 48:00:00 16e2 32e7 16 4096 2
+schedule_test_td3 96:00:00 16e2 64e7 16 4096 2
