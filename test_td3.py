@@ -336,7 +336,7 @@ def main(config):
 
     y_critic_loss = res['metrics']['loss']['critic_loss']
 
-    loss_plot = LinePlot("Update Step", "Loss")
+    loss_plot = LinePlot("Iteration", "Loss")
     loss_plot.add(np.arange(y_critic_loss.shape[0]), y_critic_loss, label="Critic Loss")
     loss_plot.add(x_actor_loss, y_actor_loss, label="Actor Loss")
     loss_plot.save(os.path.join(ROOT_DIR, "train_loss.png"))
@@ -352,11 +352,11 @@ def main(config):
         res['metrics']['reward']['__all__']
     )
 
-    reward_plot = LinePlot("Update Step", "Mean Reward")
+    reward_plot = LinePlot("Iteration", "Mean Reward")
     reward_plot.add(np.arange(reward_data.shape[0]), jnp.mean(reward_data, axis=1))
     reward_plot.save(os.path.join(ROOT_DIR, 'mean-reward.png'))
 
-    cumulative_reward_plot = LinePlot("Update Step", "Cumulative Mean Reward")
+    cumulative_reward_plot = LinePlot("Iteration", "Cumulative Mean Reward")
     cumulative_reward_plot.add(np.arange(reward_data.shape[0]), np.cumsum(jnp.mean(reward_data, axis=1)))
     cumulative_reward_plot.save(os.path.join(ROOT_DIR, 'cumulative-mean-reward.png'))
 
