@@ -12,9 +12,7 @@ def _make_env_step(config, env):
 
         # Select action
         rng, _rng = jax.random.split(rng)
-        pi = state_actor.apply_fn(state_actor.params, obs_batch)
-        action = pi.sample(seed=_rng)
-        # log_prob = pi.log_prob(action) # Probably not needed, maybe only for IPPO
+        action = state_actor.apply_fn(state_actor.params, obs_batch)
         env_act = unbatchify(action, env.agents, config["NUM_ENVS"], env.num_agents)
         
         # Step environment
