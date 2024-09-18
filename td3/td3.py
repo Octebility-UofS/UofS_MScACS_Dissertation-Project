@@ -19,10 +19,7 @@ class DefaultActor(nn.Module):
         x = nn.Dense(256, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
         x = nn.relu(x)
         x = nn.Dense(self.action_dim, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(x)
-        x = self.max_action * nn.tanh(x)
-        # Add some noise and return a multivariate normal distribution that can be sampled from
-        log_std = self.param('log_std', nn.initializers.zeros, (self.action_dim,))
-        return distrax.MultivariateNormalDiag(x, jnp.exp(log_std))
+        return self.max_action * nn.tanh(x)
     
 class DefaultCritic(nn.Module):
     @nn.compact
@@ -43,6 +40,12 @@ class DefaultCritic(nn.Module):
         q2 = nn.relu(q2)
         q2 = nn.Dense(1, kernel_init=orthogonal(np.sqrt(2)), bias_init=constant(0.0))(q2)
         return q1, q2
+    
+class TrainStates(NamedTuple):
+    state_actor: TrainState
+    state_actor_target: TrainState
+    state_critic: TrainState
+    state_critic_target: TrainState
     
 class Transition(NamedTuple):
     done: jnp.ndarray
@@ -75,8 +78,8 @@ def make_td3(rng: jax.dtypes.prng_key, config, env):
     rng, _rng = jax.random.split(rng)
     net_critic_params = net_critic.init(_rng, net_critic_init_x)
 
-    tx_actor = optax.adam(config["LR"], eps=1e-5)
-    tx_critic = optax.adam(config["LR"], eps=1e-5)
+    tx_actor = optax.adam(config["LR"], eps=1e-8)
+    tx_critic = optax.adam(config["LR"], eps=1e-8)
 
     train_state_actor = TrainState.create(
         apply_fn=net_actor.apply,
@@ -101,25 +104,22 @@ def make_td3(rng: jax.dtypes.prng_key, config, env):
 
 
 def _make_delayed_policy_update(config):
-    def _delayed_policy_update(update_state, batch_traj):
-        rng, train_states, batch_count = update_state
+    def _delayed_policy_update(train_states, batch_traj):
         state_actor, state_actor_target, state_critic, state_critic_target = train_states
         done, action, reward, obs, next_obs = batch_traj
 
         # Compute actor loss
         # actor_loss = -self.critic.Q1(state, self.actor(state)).mean()
-        def _loss_actor(actor_params, actor_apply_fn, rng, state_critic, obs):
+        def _loss_actor(actor_params, actor_apply_fn, state_critic, obs):
             # TODO verify that this is actually correct
             # it might be that both actor AND critic losses are updated here? (but that can't really be)
-            rng, _rng = jax.random.split(rng)
-            act = actor_apply_fn(actor_params, obs).sample(seed=_rng)
+            act = actor_apply_fn(actor_params, obs)
             obs_action = jnp.concatenate([obs, act], axis=1)
             critic_value_Q1 = state_critic.apply_fn(state_critic.params, obs_action)[0]
             return -jnp.mean(critic_value_Q1)
         
         actor_grad_fn = jax.value_and_grad(_loss_actor)
-        rng, _rng = jax.random.split(rng)
-        actor_loss, actor_grads = actor_grad_fn(state_actor.params, state_actor.apply_fn, _rng, state_critic, obs)
+        actor_loss, actor_grads = actor_grad_fn(state_actor.params, state_actor.apply_fn, state_critic, obs)
         state_actor = state_actor.apply_gradients(grads=actor_grads)
 
         # Update the frozen target models
@@ -132,28 +132,37 @@ def _make_delayed_policy_update(config):
             state_actor.params, state_actor_target.params
         ))
 
-        train_states = (state_actor, state_actor_target, state_critic, state_critic_target)
-        update_state = rng, train_states, batch_count
-        return update_state, actor_loss
+        train_states = TrainStates(
+            state_actor,
+            state_actor_target,
+            state_critic,
+            state_critic_target
+        )
+        return train_states, actor_loss
     return _delayed_policy_update
 
 
 def _make_td3_update_batch(config):
-    def _update_batch(update_state, batch_traj):
-        rng, train_states, batch_count = update_state
+    def _update_batch(rng, train_states, batch_traj, counter):
         state_actor, state_actor_target, state_critic, state_critic_target = train_states
         done, action, reward, obs, next_obs = batch_traj
 
-        # Select action according to policy (actor target) (noise is already included??)
+        # # Select action according to policy and add clipped noise
         rng, _rng = jax.random.split(rng)
-        next_pi = state_actor_target.apply_fn(state_actor_target.params, next_obs)
-        next_action = next_pi.sample(seed=_rng)
+        noise = jnp.clip(
+            jax.random.normal(_rng, action.shape) * config["POLICY_NOISE"],
+            min=-config["NOISE_CLIP"], max=config["NOISE_CLIP"]
+        )
+        next_action = jnp.clip(
+            noise + state_actor_target.apply_fn(state_actor_target.params, next_obs),
+            min=-config["MAX_ACTION"], max=config["MAX_ACTION"]
+        )
 
         # Compute the target Q value
         next_obs_action = jnp.concatenate([next_obs, next_action], axis=1)
         target_Q1, target_Q2 = state_critic_target.apply_fn(state_critic_target.params, next_obs_action)
         target_Q = jnp.minimum(target_Q1, target_Q2)
-        target_Q = reward + (1-done) * config["DISCOUNT"] * target_Q
+        target_Q = reward[:, jnp.newaxis] + (1-done[:, jnp.newaxis]) * config["DISCOUNT"] * target_Q
 
         # Loss Function for updating Critic
         def _loss_critic(critic_params, critic_apply_fn, obs, action, target_Q):
@@ -169,35 +178,65 @@ def _make_td3_update_batch(config):
         critic_loss, critic_grads = critic_grad_fn(state_critic.params, state_critic.apply_fn, obs, action, target_Q)
         state_critic = state_critic.apply_gradients(grads=critic_grads)
 
-        # Perform delayed policy updates
-        train_states = (state_actor, state_actor_target, state_critic, state_critic_target)
-        update_state = rng, train_states, batch_count
+        train_states = TrainStates(
+            state_actor,
+            state_actor_target,
+            state_critic,
+            state_critic_target
+        )
 
-        update_state, actor_loss = jax.lax.cond(
-            batch_count % config["POLICY_FREQ"] == 0,
+        # Perform delayed policy updates
+        def _no_policy_update(train_states, traj):
+            return train_states, jnp.nan
+
+        train_states, actor_loss = jax.lax.cond(
+            (counter % config["POLICY_FREQ"]) == 0,
             _make_delayed_policy_update(config),
-            lambda updt_state, traj: (updt_state, jnp.nan),
-            update_state, batch_traj
+            _no_policy_update,
+            train_states, batch_traj
         )
         
-
-        rng, train_states, batch_count = update_state
-        state_actor, state_actor_target, state_critic, state_critic_target = train_states
-
         loss_info = {
             "critic_loss": critic_loss,
             "actor_loss": actor_loss
         }
 
-        train_states = (state_actor, state_actor_target, state_critic, state_critic_target)
-        batch_count = batch_count + 1
-        update_state = rng, train_states, batch_count
-        return update_state, loss_info
+        return train_states, loss_info
 
     return _update_batch
 
 def make_td3_update(config):
-    def _td3_update(rng: jax.dtypes.prng_key, train_states, traj_buffer):
+    # def _pure_random()
+
+    def _sample_trajectories(rng, trajectories):
+        sample_ixs = jax.random.randint(rng, (config["BATCH_SIZE"], ), 0, trajectories.done.shape[0])
+        samples = jax.tree.map(
+            lambda x: x[sample_ixs],
+            trajectories
+        )
+        return jax.tree.map(
+            lambda x: x.reshape( (x.shape[0]*x.shape[1], ) + x.shape[2:] ),
+            samples
+        )
+    
+    def _td3_update(rng: jax.dtypes.prng_key, train_states, trajectories, counter):
+        # Get random samples from the trajectories
+        rng, _rng = jax.random.split(rng)
+        # samples = _sample_trajectories(_rng, trajectories)
+        samples = jax.tree.map(
+            lambda x: x.reshape( (x.shape[0]*x.shape[1], ) + x.shape[2:] ),
+            trajectories
+        )
+
+        # Perform the update using the samples
+        rng, _rng = jax.random.split(rng)
+        train_states, loss_info = _make_td3_update_batch(
+            config
+        )(_rng, train_states, samples, counter)
+
+        return train_states, loss_info
+
+
         # Split the replay buffer into shuffled batches
         flattened_traj_buffer = jax.tree.map(
             lambda x: x.reshape((config["NUM_BATCHES"]*config["BATCH_SIZE"], ) + x.shape[2:]),

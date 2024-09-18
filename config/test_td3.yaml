@@ -1,17 +1,15 @@
 "JAX_SEED": 0
 
-"NUM_UPDATES": 1e2
-"REPLAY_ENV_STEPS": 1e2
-"BATCH_SIZE": 512
+"EXPLORATION_STEPS": 4e1 # 16e3
+"TOTAL_STEPS": 8e2 # 1e6
+"NUM_ENVS": 8 # 64
+"BATCH_SIZE": 64 # 256
 
-"NUM_CHECKPOINTS": 4
-
-
-"NUM_ENVS": 64
 "ENV_NAME": "ant_4x2" 
 "ENV_KWARGS": {}
 
 #TD3 Parameters
+"EXPLORATION_NOISE": 0.1 # Standard deviation of gaussian noise
 "LR": 3e-4
 "DISCOUNT": 0.99
 "TAU": 0.005
@@ -19,8 +17,4 @@
 "NOISE_CLIP": 0.5
 "POLICY_FREQ": 2 # Frequency of Delayed policy updates
 
-"Comment":
-  - "Previously fcp plots used cumsum over the mean reward for each update step"
-  - "Previously td3 used the sum on mean rewards across environments"
-  - "Instead of using cumsum for fcp plots, we now use the mean reward per environment step per update step for both fcp and td3"
-  - "Also fixed issue of graphs not being saved correctly"
+"NUM_CHECKPOINTS": 4
