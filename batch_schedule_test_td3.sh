@@ -21,3 +21,4 @@ schedule_test_td3 06:00:00 16e2 16e6 16 4096 2
 schedule_test_td3 12:00:00 16e2 16e7 16 4096 2
 schedule_test_td3 48:00:00 16e2 32e7 16 4096 2
 schedule_test_td3 96:00:00 16e2 64e7 16 4096 2
+schedule_test_td3 96:00:00 16e2 16e8 16 8192 2
