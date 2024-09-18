@@ -6,7 +6,7 @@ schedule_test_td3 () {
     local batch_size=$5
     local p_freq=$6
     sbatch --time=$time --output="out/td3/cpu/${env_steps}-${explore_steps}-pf${p_freq}/%j_slurm_log.out" \
-    job_schedule.sh "td3/cpu/${env_steps}-${explore_steps}-pf${p_freq}" test_td3.py \
+    job_schedule_cpu.sh "td3/cpu/${env_steps}-${explore_steps}-pf${p_freq}" test_td3.py \
     TOTAL_STEPS=$env_steps EXPLORATION_STEPS=$explore_steps NUM_ENVS=$environments BATCH_SIZE=$batch_size POLICY_FREQ=$p_freq BACKEND=cpu
 }
 
