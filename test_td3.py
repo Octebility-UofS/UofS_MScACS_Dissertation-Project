@@ -228,9 +228,8 @@ def make_train(config, rng_init):
     print()
     print()
 
-    # Use log scale for potentiall better training results
-    # TODO
-    # env = LogWrapper(env, replace_info=True)
+    # Use log scale for potentially better training results
+    env = LogWrapper(env, replace_info=True)
 
     # Initialize TD3
     # We are assuming that the continuous action space is symmetric
