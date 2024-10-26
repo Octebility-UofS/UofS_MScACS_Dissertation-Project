@@ -1,0 +1,22 @@
+"SEED": 42
+"DISABLE_JIT": False
+"NUM_CHECKPOINTS": 0
+
+"ENV_NAME": "ant_4x2" 
+"ENV_KWARGS": {}
+
+"NUM_ENVS": 64
+"TOTAL_STEPS": 1e6
+"EXPLORATION_STEPS": 32e3
+"BATCH_SIZE": 256
+"NUM_UPDATES_PER_TIMESTEP": 8
+"EVALUATION_FREQUENCY": 5e3
+
+# TD3-Specific Parameters
+"POLICY_FREQ": 2 # Frequency of Delayed policy updates
+"EXPLORATION_NOISE": 0.1 # Standard deviation of gaussian noise
+"LR": 3e-4
+"DISCOUNT": 0.99
+"TAU": 0.005
+"POLICY_NOISE": 0.2
+"NOISE_CLIP": 0.5
