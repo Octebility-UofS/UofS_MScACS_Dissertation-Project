@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import jaxmarl
 from jaxmarl.wrappers.baselines import LogWrapper
+from matplotlib import pyplot as plt
 import numpy as np
 from omegaconf import OmegaConf
 import optax
@@ -126,7 +127,7 @@ class TD3:
             next_obs_action = jnp.concatenate([next_obs, next_action], axis=1)
             target_Q1, target_Q2 = state_critic_target.apply_fn(state_critic_target.params, next_obs_action)
             target_Q = jnp.minimum(target_Q1, target_Q2)
-            target_Q = reward[:, jnp.newaxis] + (1-done[:, jnp.newaxis]) * config["DISCOUNT"] * target_Q
+            target_Q = reward + (1-done) * config["DISCOUNT"] * target_Q
 
             # Loss Function for updating Critic
             def _loss_critic(critic_params, critic_apply_fn, obs, action, target_Q):
@@ -358,12 +359,12 @@ def make_iteration(config, env):
         replay_buffer = ReplayBufferTD3.add(replay_buffer, trajectories)
 
         # Sample Trajectories from replay buffer and perform update
-        print(bool_delayed_policy_update)
         rng, _rng = jax.random.split(rng)
         rng, rng_sample = jax.random.split(rng)
+        buffer_samples = ReplayBufferTD3.sample(rng_sample, replay_buffer, config["BATCH_SIZE"])
         train_states = TD3.make_update(config)(
             _rng, train_states,
-            ReplayBufferTD3.sample(rng_sample, replay_buffer, config["BATCH_SIZE"]),
+            buffer_samples,
             bool_delayed_policy_update
         )
 
@@ -414,7 +415,7 @@ def make_train(config, rng_init):
         print(k, v)
     print("\n")
     
-    def _train(rng):
+    def _train(rng, train_states: TrainStates):
         # Init Environment
         rng, _rng = jax.random.split(rng)
         reset_rng = jax.random.split(_rng, config["NUM_ENVS"])
@@ -433,7 +434,7 @@ def make_train(config, rng_init):
             exploration_trajectories
         )
         replay_buffer = ReplayBufferTD3.init(
-            config["TOTAL_STEPS"],
+            config["TOTAL_STEPS"] * config["NUM_ACTORS"],
             batched_entry=exploration_trajectories_unbatched
         )
         replay_buffer = ReplayBufferTD3.add(replay_buffer, exploration_trajectories_unbatched)
@@ -454,8 +455,13 @@ def make_train(config, rng_init):
             runner_state, bool_a_delayed_policy_updates,
             length=config["NUM_ITERATIONS_TRAIN"]
         )
+        train_states, replay_buffer, env_obs, env_state = runner_state[1:]
+
+        metrics = {
+            'train_reward': replay_buffer['data'].reward
+        }
         return metrics
-    return _train
+    return train_states, _train
 
 
 @hydra.main(version_base=None, config_path="config", config_name="td3_ff_mabrax")
@@ -465,8 +471,12 @@ def main(config):
     rng = jax.random.PRNGKey(config["SEED"])
     with jax.disable_jit(config["DISABLE_JIT"]):
         rng, _rng = jax.random.split(rng)
-        train_jit = jax.jit(make_train(config, _rng))
-        out = train_jit(rng)
+        train_states, train_fn = make_train(config, _rng)
+        train_jit = jax.jit(train_fn)
+        metrics = train_jit(rng, train_states)
+
+        plt.plot(range(metrics['train_reward'].shape[0]), metrics['train_reward'])
+        plt.show()
 
 
 if __name__ == "__main__":
