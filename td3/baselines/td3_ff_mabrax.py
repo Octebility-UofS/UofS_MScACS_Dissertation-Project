@@ -359,14 +359,15 @@ def make_iteration(config, env):
         replay_buffer = ReplayBufferTD3.add(replay_buffer, trajectories)
 
         # Sample Trajectories from replay buffer and perform update
-        rng, _rng = jax.random.split(rng)
-        rng, rng_sample = jax.random.split(rng)
-        buffer_samples = ReplayBufferTD3.sample(rng_sample, replay_buffer, config["BATCH_SIZE"])
-        train_states = TD3.make_update(config)(
-            _rng, train_states,
-            buffer_samples,
-            bool_delayed_policy_update
-        )
+        for update_count in range(int(config["NUM_UPDATES_PER_TIMESTEP"])):
+            rng, _rng = jax.random.split(rng)
+            rng, rng_sample = jax.random.split(rng)
+            buffer_samples = ReplayBufferTD3.sample(rng_sample, replay_buffer, config["BATCH_SIZE"])
+            train_states = TD3.make_update(config)(
+                _rng, train_states,
+                buffer_samples,
+                bool_delayed_policy_update[update_count]
+            )
 
         metric = {} # TODO
 
@@ -434,7 +435,7 @@ def make_train(config, rng_init):
             exploration_trajectories
         )
         replay_buffer = ReplayBufferTD3.init(
-            config["TOTAL_STEPS"] * config["NUM_ACTORS"],
+            config["TOTAL_STEPS"] * env.num_agents,
             batched_entry=exploration_trajectories_unbatched
         )
         replay_buffer = ReplayBufferTD3.add(replay_buffer, exploration_trajectories_unbatched)
@@ -446,9 +447,9 @@ def make_train(config, rng_init):
         # Then perform TD3 updates according to config
         rng, _rng = jax.random.split(rng)
         bool_a_delayed_policy_updates = jnp.array(
-            [i%config["POLICY_FREQ"] for i in range(config["NUM_ITERATIONS_TRAIN"])],
+            [i%config["POLICY_FREQ"] for i in range(config["NUM_ITERATIONS_TRAIN"]*config["NUM_UPDATES_PER_TIMESTEP"])],
             dtype=jnp.bool
-        )
+        ).reshape(config["NUM_ITERATIONS_TRAIN"], config["NUM_UPDATES_PER_TIMESTEP"])
         runner_state = _rng, train_states, replay_buffer, env_obs, env_state
         runner_state, metrics = jax.lax.scan(
             make_iteration(config, env),
@@ -457,8 +458,15 @@ def make_train(config, rng_init):
         )
         train_states, replay_buffer, env_obs, env_state = runner_state[1:]
 
+        # Since the replay gets trajectories from all agents, we need to reshape
+        # into array(num_agents, total_training_steps)
+        # so we also take away the exploration steps since they're not helpful
+        reward_metrics = jnp.swapaxes(
+            replay_buffer['data'].reward.reshape(-1, env.num_agents)[int(config["EXPLORATION_STEPS"]):],
+            0, 1
+        )
         metrics = {
-            'train_reward': replay_buffer['data'].reward
+            'train_reward': reward_metrics
         }
         return metrics
     return train_states, _train
@@ -475,7 +483,9 @@ def main(config):
         train_jit = jax.jit(train_fn)
         metrics = train_jit(rng, train_states)
 
-        plt.plot(range(metrics['train_reward'].shape[0]), metrics['train_reward'])
+        val_x = range(metrics['train_reward'].shape[1])
+        for i in range(metrics['train_reward'].shape[0]):
+            plt.plot(val_x, metrics['train_reward'][i], label=f"agent_{i}")
         plt.show()
 
 

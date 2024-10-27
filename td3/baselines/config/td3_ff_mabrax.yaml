@@ -6,14 +6,14 @@
 "ENV_KWARGS": {}
 
 "NUM_ENVS": 64
-"TOTAL_STEPS": 16e2
+"TOTAL_STEPS": 32e2
 "EXPLORATION_STEPS": 32e1
-"BATCH_SIZE": 128
-"NUM_UPDATES_PER_TIMESTEP": 4
+"BATCH_SIZE": 512
+"NUM_UPDATES_PER_TIMESTEP": 8
 "EVALUATION_FREQUENCY": 5e3
 
 # TD3-Specific Parameters
-"POLICY_FREQ": 2 # Frequency of Delayed policy updates
+"POLICY_FREQ": 16 # Frequency of Delayed policy updates
 "EXPLORATION_NOISE": 0.1 # Standard deviation of gaussian noise
 "LR": 3e-4
 "DISCOUNT": 0.99
